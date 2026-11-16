@@ -37,9 +37,10 @@ type Client struct {
 // configJSON: {base, proxy, credTrustOrigins}；logger 可为 nil。
 func NewClient(configJSON string, logger Logger) (*Client, error) {
 	var cfg struct {
-		Base      string          `json:"base"`
-		Proxy     *string         `json:"proxy"`
-		CredTrust map[string]bool `json:"credTrustOrigins"`
+		Base          string          `json:"base"`
+		Proxy         *string         `json:"proxy"`
+		CredTrust     map[string]bool `json:"credTrustOrigins"`
+		RetryAttempts int             `json:"retryAttempts"`
 	}
 	if configJSON != "" {
 		if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
@@ -52,11 +53,12 @@ func NewClient(configJSON string, logger Logger) (*Client, error) {
 		slog = logf{logger}
 	}
 	c, err := sdk.NewClient(sdk.Options{
-		Transport: sdk.NewHTTPTransport(sdk.TransportConfig{Proxy: cfg.Proxy}),
-		Store:     store,
-		Base:      cfg.Base,
-		CredTrust: cfg.CredTrust,
-		Logger:    slog,
+		Transport:     sdk.NewHTTPTransport(sdk.TransportConfig{Proxy: cfg.Proxy}),
+		Store:         store,
+		Base:          cfg.Base,
+		CredTrust:     cfg.CredTrust,
+		Logger:        slog,
+		RetryAttempts: cfg.RetryAttempts, // 0 → SDK 默认 3
 	})
 	if err != nil {
 		return nil, jsonError(err)

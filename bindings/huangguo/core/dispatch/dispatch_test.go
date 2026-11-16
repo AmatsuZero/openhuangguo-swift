@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -105,5 +106,20 @@ func TestErrorMapping(t *testing.T) {
 		if e["code"] != tc.code {
 			t.Errorf("Error(%v).code = %v, want %s", tc.err, e["code"], tc.code)
 		}
+	}
+}
+
+// 多层包装后错误码仍按优先级正确映射：取消优先于传输/重试。
+func TestErrorCodePriorityThroughWrapping(t *testing.T) {
+	wrapped := fmt.Errorf("%w: %w", context.Canceled, errors.New("transport boom"))
+	if got := Error(wrapped)["code"]; got != "CANCELLED" {
+		t.Fatalf("cancel should win, got %v", got)
+	}
+	retryable := fmt.Errorf("%w: %w: %w", sdk.ErrRetryable, sdk.ErrTransport, errors.New("reset"))
+	if got := Error(retryable)["code"]; got != "RETRYABLE" {
+		t.Fatalf("retryable should map, got %v", got)
+	}
+	if Error(retryable)["retryable"] != true {
+		t.Fatal("retryable flag should be true")
 	}
 }

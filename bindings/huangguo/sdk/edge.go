@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
+	"syscall"
 )
 
 // 哨兵错误供 dispatch 映射错误码、供重试分类。
@@ -86,7 +88,15 @@ func (c *Client) edge(ctx context.Context, method, path string, body any, needCr
 		NoRedirect: true, // edge 首版禁自动重定向
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTransport, err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			// 取消优先：保留原始取消原因，便于 errors.Is(err, context.Canceled)。
+			return nil, fmt.Errorf("%w: %w", ctxErr, err)
+		}
+		// 临时网络故障按可重试分类，否则作为永久传输错误。
+		if isTransientTransportError(err) {
+			return nil, fmt.Errorf("%w: %w: %w", ErrRetryable, ErrTransport, err)
+		}
+		return nil, fmt.Errorf("%w: %w", ErrTransport, err)
 	}
 
 	// 先判 HTTP 状态，再解析信封。
@@ -108,6 +118,33 @@ func (c *Client) edge(ctx context.Context, method, path string, body any, needCr
 		return nil, fmt.Errorf("%w: token origin %q no longer matches base %q", ErrAuth, s.Origin, curBase)
 	}
 	return data, nil
+}
+
+// isTransientTransportError 判断网络层错误是否值得重试。
+// 不包含 context.Canceled（用户取消，绝不重试）；包含超时、连接重置/拒绝、DNS 失败。
+func isTransientTransportError(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	// syscall 连接类临时错误。
+	for _, code := range []syscall.Errno{
+		syscall.ECONNRESET, syscall.ECONNREFUSED, syscall.ETIMEDOUT,
+		syscall.EHOSTUNREACH, syscall.ENETUNREACH, syscall.EPIPE,
+	} {
+		if errors.Is(err, code) {
+			return true
+		}
+	}
+	// DNS 查询失败。
+	var dnsErr *net.DNSError
+	return errors.As(err, &dnsErr)
 }
 
 // classifyHTTPStatus：401/403→ErrAuth；408/425/429/5xx→可重试；其余非 2xx→错误。

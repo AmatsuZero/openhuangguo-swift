@@ -57,6 +57,10 @@ func NewClient(o Options) (*Client, error) {
 		}
 	}
 	sess, _ := o.Store.Load()
+	retries := o.RetryAttempts
+	if retries <= 0 {
+		retries = 3 // 临时故障默认重试 3 次尝试；写操作仍由 call() 禁用重试
+	}
 	return &Client{
 		transport:     o.Transport,
 		store:         o.Store,
@@ -64,7 +68,7 @@ func NewClient(o Options) (*Client, error) {
 		session:       sess,
 		credTrust:     trust,
 		logger:        o.Logger,
-		retryAttempts: o.RetryAttempts,
+		retryAttempts: retries,
 	}, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/url"
 	"time"
 
@@ -28,6 +29,10 @@ func (c *Client) call(ctx context.Context, method, path string, body any, needCr
 	}
 	var lastErr error
 	for i := 0; i < attempts; i++ {
+		// 重试前若已取消，立即返回取消原因，不再发下一次请求。
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		data, err := c.edge(ctx, method, path, body, needCred)
 		if err == nil {
 			return data, nil
@@ -39,10 +44,24 @@ func (c *Client) call(ctx context.Context, method, path string, body any, needCr
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(time.Duration(i+1) * 100 * time.Millisecond):
+		case <-time.After(retryDelay(i + 1)):
 		}
 	}
 	return nil, lastErr
+}
+
+// retryDelay 返回第 attempt 次重试前的退避时长，带 ±50% 抖动，避免重试风暴。
+func retryDelay(attempt int) time.Duration {
+	base := time.Duration(attempt) * 100 * time.Millisecond
+	jitter := time.Duration(rand.Int63n(int64(base/2) + 1)) // [0, base/2]
+	if rand.Intn(2) == 0 {
+		jitter = -jitter
+	}
+	d := base + jitter
+	if d < 10*time.Millisecond {
+		d = 10 * time.Millisecond
+	}
+	return d
 }
 
 func decodeJSON[T any](data []byte) (*T, error) {
