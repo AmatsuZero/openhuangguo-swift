@@ -1,0 +1,11 @@
+go.work
+go.work.sum
+*.a
+*.aar
+*.xcframework
+*.xcframework.zip
+build/
+bin/
+.openhongguo-build/
+.gradle/
+**/build/
