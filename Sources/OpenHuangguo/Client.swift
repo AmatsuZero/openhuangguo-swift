@@ -85,13 +85,20 @@ private final class Logger: NSObject, CoreLoggerProtocol, @unchecked Sendable {
     func log(_ line: String?) { sink(line ?? "") }
 }
 
-private protocol Engine: Sendable {
+// 登录/注册结果：token 已写入原生 store，仅回传 user（原始 JSON）。
+public struct AuthResult: Codable, Sendable {
+    public var user: Data
+    public init(user: Data = Data()) { self.user = user }
+    enum CodingKeys: String, CodingKey { case user = "user" }
+}
+
+internal protocol Engine: Sendable {
     func start(_ method: String, _ args: String, _ done: @escaping @Sendable (String) -> Void) -> @Sendable () -> Void
     func setTokenJSON(_ json: String) throws
     func getTokenJSON() throws -> String
 }
 
-private struct GoEngine: Engine, @unchecked Sendable {
+internal struct GoEngine: Engine, @unchecked Sendable {
     let client: CoreClient
     private struct CallRef: @unchecked Sendable { let call: CoreCall? }
 
@@ -100,15 +107,15 @@ private struct GoEngine: Engine, @unchecked Sendable {
         return { ref.call?.cancel() }
     }
     func setTokenJSON(_ json: String) throws {
-        var err: NSError?
-        client.setTokenJSON(json, &err)
-        if let err { throw HuangguoError.parse(err.localizedDescription) }
+        // Go 的 `error` 返回值被 gomobile 映射为 Swift 的 throws。
+        try client.setTokenJSON(json)
     }
     func getTokenJSON() throws -> String {
+        // gomobile 对「仅返回 error」用 throws，但对「返回值 + error」保留 NSError** 参数。
         var err: NSError?
         let s = client.getTokenJSON(&err)
         if let err { throw HuangguoError.parse(err.localizedDescription) }
-        return s ?? ""
+        return s
     }
 }
 
@@ -230,32 +237,32 @@ public final class OpenHuangguoClient: Sendable {
     // MARK: - 内部
 
     private func call<T: Decodable>(_ method: String, _ args: any Encodable...) async throws -> T {
-        let raw = try encodeArgs(args)
-        return try await withCheckedThrowingContinuation { cont in
-            let box = CancelBox()
-            let ref = engine.start(method, raw) { json in
-                box.set({})
-                cont.resume(with: decodeEnvelope(json))
-            }
-            box.set(ref)
-        }
+        try await invoke(method, try encodeArgs(args))
     }
 
     private func callVoid(_ method: String, _ args: any Encodable...) async throws {
-        let _: Nothing = try await call(method, args...)
+        let _: Nothing = try await invoke(method, try encodeArgs(args))
     }
 
     /// 登录/注册/登出/SetBase：callback 成功后先写持久化，写入成功才 resolve。
     private func callPersist<T: Decodable>(_ method: String, _ args: any Encodable...) async throws -> T {
-        let raw = try encodeArgs(args)
-        return try await withCheckedThrowingContinuation { cont in
+        try await invokePersist(method, try encodeArgs(args))
+    }
+
+    private func callVoidPersist(_ method: String, _ args: any Encodable...) async throws {
+        let _: Nothing = try await invokePersist(method, try encodeArgs(args))
+    }
+
+    // 单一核心：callback 成功时先写 token 持久化，写入成功才 resolve（硬错误不静默）。
+    private func invokePersist<T: Decodable>(_ method: String, _ raw: String) async throws -> T {
+        try await withCheckedThrowingContinuation { cont in
             let box = CancelBox()
             let ref = engine.start(method, raw) { [weak self] json in
                 let result: Result<T, Error> = decodeEnvelope(json)
                 if case .success = result, let store = self?.tokenStore {
                     do {
-                        let snapshot = try self!.engine.getTokenJSON()
-                        try store.save(snapshot)
+                        guard let self else { throw HuangguoError(code: .unknown, message: "client deallocated") }
+                        try store.save(self.engine.getTokenJSON())
                     } catch {
                         cont.resume(throwing: error)
                         box.set({})
@@ -269,8 +276,15 @@ public final class OpenHuangguoClient: Sendable {
         }
     }
 
-    private func callVoidPersist(_ method: String, _ args: any Encodable...) async throws {
-        let _: Nothing = try await callPersist(method, args...)
+    private func invoke<T: Decodable>(_ method: String, _ raw: String) async throws -> T {
+        try await withCheckedThrowingContinuation { cont in
+            let box = CancelBox()
+            let ref = engine.start(method, raw) { json in
+                box.set({})
+                cont.resume(with: decodeEnvelope(json))
+            }
+            box.set(ref)
+        }
     }
 
     private func encodeArgs(_ args: [any Encodable]) throws -> String {

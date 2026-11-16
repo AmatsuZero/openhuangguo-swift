@@ -33,7 +33,7 @@ kotlin {
 dependencies {
     implementation(files("libs/core.jar"))
     api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-    api("androidx.media3:media3-datasource:1.5.1")
+    api("androidx.media3:media3-datasource:1.11.1") // 传递依赖 media3-common（DataReader/C/UnstableApi）
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")

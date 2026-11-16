@@ -80,8 +80,7 @@ public final class PlayerResourceLoader: NSObject, AVAssetResourceLoaderDelegate
 
     private func serveData(_ request: AVAssetResourceLoadingRequest, data: Data, status: Int,
                            headers: [String: String], isPlaylist: Bool) {
-        if let info = request.informationRequest {
-            info.statusCode = status
+        if let info = request.contentInformationRequest {
             if let len = headers["Content-Length"].flatMap({ Int($0) }) { info.contentLength = Int64(len) }
             info.contentType = isPlaylist ? "application/vnd.apple.mpegurl" : (headers["Content-Type"] ?? "video/mp2t")
             info.isByteRangeAccessSupported = true
@@ -116,8 +115,8 @@ public final class PlayerResourceLoader: NSObject, AVAssetResourceLoaderDelegate
     private static func looksLikePlaylist(url: URL, headers: [String: String], body: Data) -> Bool {
         let ext = (url.pathExtension as NSString).lowercased
         if ext == "m3u8" { return true }
-        let ctype = (headers["Content-Type"] ?? "").lowercased
-        if ctype.contains("mpegurl") || ctype.contains("m3u8") { return true }
+        let cth = (headers["Content-Type"] ?? "").lowercased()
+        if cth.contains("mpegurl") || cth.contains("m3u8") { return true }
         let prefix = "#EXTM3U".utf8
         return body.count >= prefix.count && Array(body.prefix(prefix.count)) == Array(prefix)
     }

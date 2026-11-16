@@ -30,25 +30,36 @@ data class ClientOptions(
     }.toString()
 }
 
+/** 登录/注册结果：token 已写入原生 store，仅回传 user（原始 JSON 字符串）。 */
+data class AuthResult(val user: String = "")
+
 /** 一次按名字的调用；done 收到结果 JSON，返回的函数用来取消。 */
 internal fun interface Engine {
     fun start(method: String, args: String, done: (String) -> Unit): () -> Unit
-    fun setTokenJSON(json: String)
-    fun getTokenJSON(): String
 }
 
-private class GoEngine(private val client: dev.openhuangguo.core.Client) : Engine {
+/** token JSON 桥接：原生层读写 Keychain/Keystore 的入口。 */
+internal interface TokenBridge {
+    fun setTokenJSON(json: String)
+    fun getTokenJSON(): String?
+}
+
+private class GoBridge(private val client: dev.openhuangguo.core.Client) : TokenBridge {
+    override fun setTokenJSON(json: String) { client.setTokenJSON(json) }
+    override fun getTokenJSON(): String? = client.getTokenJSON()
+}
+
+private class GoEngine(val client: dev.openhuangguo.core.Client) : Engine {
     override fun start(method: String, args: String, done: (String) -> Unit): () -> Unit {
         val call = client.start(method, args, dev.openhuangguo.core.Callback { done(it) })
         return { call.cancel() }
     }
-    override fun setTokenJSON(json: String) { client.setTokenJSON(json) }
-    override fun getTokenJSON(): String = client.getTokenJSON() ?: ""
 }
 
 /** 黄果客户端；所有方法为挂起函数，失败抛 HuangguoException。 */
 class OpenHuangguoClient internal constructor(
     private val engine: Engine,
+    private val bridge: TokenBridge?,
     private val tokenStore: TokenStore?,
 ) {
     companion object {
@@ -56,10 +67,16 @@ class OpenHuangguoClient internal constructor(
         @JvmOverloads
         fun create(options: ClientOptions = ClientOptions()): OpenHuangguoClient {
             val logger = options.logger?.let { dev.openhuangguo.core.Logger { line -> it(line) } }
-            val client = dev.openhuangguo.core.NewClient(options.toJson(), logger)
+            // gomobile 把包级函数 NewClient 生成为 Core 类的静态方法 newClient（首字母小写）。
+            val client = try {
+                dev.openhuangguo.core.Core.newClient(options.toJson(), logger)
+            } catch (e: Exception) {
+                throw HuangguoException.parse(e.message)
+            }
             val engine = GoEngine(client)
-            options.tokenStore?.load()?.let { engine.setTokenJSON(it) }
-            return OpenHuangguoClient(engine, options.tokenStore)
+            val bridge = GoBridge(client)
+            options.tokenStore?.load()?.let { bridge.setTokenJSON(it) }
+            return OpenHuangguoClient(engine, bridge, options.tokenStore)
         }
     }
 
@@ -129,7 +146,8 @@ class OpenHuangguoClient internal constructor(
         val o = JSONObject(json)
         if (o.has("result")) {
             val store = tokenStore ?: return
-            try { store.save(engine.getTokenJSON()) } catch (e: Exception) { throw e }
+            val b = bridge ?: return
+            store.save(b.getTokenJSON() ?: "")
         }
     }
 
