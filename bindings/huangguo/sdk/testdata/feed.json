@@ -1,0 +1,55 @@
+{
+  "status": 1,
+  "msg": "",
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "title": "测试剧集一",
+        "cover": "https://cdn.example.com/cover1.jpg",
+        "description": "带全部字段的样本",
+        "tags": ["剧情", "热血"],
+        "score": 9.2,
+        "episode_count": 2,
+        "total_episodes": 12,
+        "duration": "45:00",
+        "hot": 100,
+        "like_count": 3,
+        "collect_count": 4,
+        "comment_count": 5,
+        "is_finished": true,
+        "is_original": 1,
+        "created_at": "2026-01-01T00:00:00Z",
+        "last_ep_at": 1735689600,
+        "new_at": 1735776000,
+        "author": {
+          "id": 7,
+          "name": "作者甲",
+          "avatar": "https://cdn.example.com/avatar7.jpg",
+          "followers": 8
+        }
+      },
+      {
+        "id": 2,
+        "title": "测试剧集二（可选字段缺失）",
+        "cover": "https://cdn.example.com/cover2.jpg",
+        "tags": [],
+        "score": 8,
+        "episode_count": 1,
+        "total_episodes": 1,
+        "hot": 50,
+        "like_count": 0,
+        "collect_count": 0,
+        "comment_count": 0,
+        "is_finished": false,
+        "is_original": 0
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "pages": 5,
+      "size": 20,
+      "total": 100
+    }
+  }
+}
