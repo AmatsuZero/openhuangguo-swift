@@ -31,7 +31,7 @@ make all            # 以上全部
 
 ## 消费方式
 
-Swift 通过 SwiftPM 指向本仓库根 `Package.swift` 的 `binaryTarget`（`OpenHuangguoCore`），从本仓库 release 下载 `OpenHuangguoCore.xcframework.zip`。Android 通过本仓库 release 的 `huangguo-release.aar`。
+Swift 通过 SwiftPM 指向本仓库根 `Package.swift` 的 `binaryTarget`（`OpenHuangguoCore`），从本仓库 release 下载 `OpenHuangguoCore.xcframework.zip`。Android 通过本仓库 release 的 `huangguo-release.aar`——这是完整壳 AAR（Kotlin `OpenHuangguoClient` + Go `core.jar` + jni），下载后用 `implementation(files("huangguo-release.aar"))` 集成；其传递依赖（kotlinx-coroutines、media3-datasource）需在 App 侧另行声明（见 `bindings/huangguo/android/build.gradle.kts`）。
 
 ## Token 持久化边界
 

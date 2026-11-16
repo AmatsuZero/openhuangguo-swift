@@ -23,8 +23,39 @@ jobs:
   verify:
     uses: ./.github/workflows/verify.yml
 
+  # Android 完整壳 AAR 在 Linux runner 构建（避开紧张的 macOS runner），
+  # 产物经 artifact 传给 release job 与 xcframework 一起发布。
+  build-aar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: bindings/huangguo/core/go.mod
+          cache-dependency-path: bindings/huangguo/core/go.sum
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@$GOMOBILE_VERSION golang.org/x/mobile/cmd/gobind@$GOMOBILE_VERSION
+          gomobile init
+      - name: Build Android AAR (full shell + core)
+        run: bindings/huangguo/build.sh android
+      - name: Upload AAR
+        uses: actions/upload-artifact@v7
+        with:
+          name: huangguo-aar
+          # build.sh 把 gradle 完整壳 AAR 改名为 openhuangguo-release.aar：
+          # 含 Kotlin 壳 OpenHuangguoClient + core.jar + jni，消费者可直接用 Kotlin API。
+          path: bindings/huangguo/android/build/outputs/aar/openhuangguo-release.aar
+          if-no-files-found: error
+
   release:
-    needs: verify
+    needs: [verify, build-aar]
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -53,6 +84,12 @@ jobs:
           CK=$(shasum -a 256 OpenHuangguoCore.xcframework.zip | awk '{print $1}')
           echo "checksum=$CK" >> "$GITHUB_OUTPUT"
 
+      - name: Download Android AAR
+        uses: actions/download-artifact@v7
+        with:
+          name: huangguo-aar
+          path: bindings/huangguo/build
+
       - name: Backfill Package.swift in a clean worktree on latest main
         env:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
@@ -74,13 +111,20 @@ jobs:
           git -C "$WORKTREE" commit -m "ci: point binaryTarget at ${TAG}" || echo "no change"
           git -C "$WORKTREE" push origin HEAD:main
 
+      # README 消费契约：Android 用 release 的 huangguo-release.aar。
+      - name: Rename AAR to consumer-facing name
+        run: mv bindings/huangguo/build/openhuangguo-release.aar bindings/huangguo/build/huangguo-release.aar
+
       - name: Publish binary release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: OpenHuangguoCore ${{ github.event.inputs.tag || github.ref_name }}
           body: |
-            OpenHuangguoCore.xcframework (iOS + macOS slices) built with gomobile.
+            OpenHuangguoCore.xcframework (iOS + macOS slices) + huangguo-release.aar
+            (Android full shell: Kotlin OpenHuangguoClient + core.jar + jni), built with gomobile.
             Binary asset tag; SwiftPM consumers use the standard semver tag vX.Y.Z.
-          files: bindings/huangguo/build/OpenHuangguoCore.xcframework.zip
+          files: |
+            bindings/huangguo/build/OpenHuangguoCore.xcframework.zip
+            bindings/huangguo/build/huangguo-release.aar
           make_latest: false
