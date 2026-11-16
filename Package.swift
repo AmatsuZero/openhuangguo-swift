@@ -13,8 +13,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "OpenHuangguoCore",
-            url: "https://github.com/AmatsuZero/openhuangguo-swift/releases/download/hg-xcf-v0.0.0/OpenHuangguoCore.xcframework.zip",
-            checksum: "0000000000000000000000000000000000000000000000000000000000000000"
+            url: "https://github.com/AmatsuZero/openhuangguo-swift/releases/download/hg-xcf-v0.1.0/OpenHuangguoCore.xcframework.zip",
+            checksum: "fc2bc3c9ca1784e7e861753ee2869d234c86f5181d96773212d50dd48c7d2fd8"
         ),
         .target(
             name: "OpenHuangguo",
