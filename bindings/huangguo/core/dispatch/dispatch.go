@@ -23,7 +23,7 @@ var methods = map[string]method{
 	},
 	"register": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		var username, password, email string
-		if err := arg(a, 2, &email); err != nil {
+		if err := argOpt(a, 2, &email); err != nil { // email 可选
 			return nil, err
 		}
 		if err := args2(a, &username, &password); err != nil {
@@ -133,7 +133,7 @@ var methods = map[string]method{
 		if err := arg(a, 2, &text); err != nil {
 			return nil, err
 		}
-		if err := arg(a, 3, &replyID); err != nil {
+		if err := argOpt(a, 3, &replyID); err != nil { // reply_id 可选（TS ?? null）
 			return nil, err
 		}
 		return c.CommentSend(ctx, id, ep, text, replyID)
@@ -275,8 +275,23 @@ func Call(ctx context.Context, c *sdk.Client, name, raw string) (any, error) {
 	return v, err
 }
 
-// arg 把第 i 个参数解码到 v；缺省或 null 时保留 v 的零值。
+// arg 解析必填参数：完全缺失时报错（防止漏参被当零值导致误操作，如漏 on 变成 DELETE）；
+// 显式 null 保留零值（兼容 TS 侧 `?? null` 的缺省约定）。
 func arg(a []json.RawMessage, i int, v any) error {
+	if i >= len(a) {
+		return fmt.Errorf("argument %d: missing required argument", i+1)
+	}
+	if string(a[i]) == "null" {
+		return nil
+	}
+	if err := json.Unmarshal(a[i], v); err != nil {
+		return fmt.Errorf("argument %d: %v", i+1, err)
+	}
+	return nil
+}
+
+// argOpt 解析可选参数：缺失或 null 都保留零值。
+func argOpt(a []json.RawMessage, i int, v any) error {
 	if i >= len(a) || string(a[i]) == "null" {
 		return nil
 	}
@@ -297,12 +312,8 @@ func args2(a []json.RawMessage, v0, v1 any) error {
 // 参数不足时返回明确的参数错误而不是 panic（崩溃整个宿主进程）。
 func argsN(a []json.RawMessage, start int, vs ...any) error {
 	for i, v := range vs {
-		idx := start + i
-		if idx >= len(a) || string(a[idx]) == "null" {
-			return fmt.Errorf("argument %d: missing required argument", idx+1)
-		}
-		if err := json.Unmarshal(a[idx], v); err != nil {
-			return fmt.Errorf("argument %d: %v", idx+1, err)
+		if err := arg(a, start+i, v); err != nil {
+			return err
 		}
 	}
 	return nil
