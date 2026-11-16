@@ -83,19 +83,18 @@ func noProxyBypass(hostPort, noProxy string) bool {
 			}
 			continue
 		}
-		// host:port 规则：端口必须一致，且 host 部分精确。
-		if ruleHost, rulePort, ok := splitHostPortRule(rule); ok && rulePort != "" {
-			if port == rulePort && host == ruleHost {
-				return true
-			}
-			continue
+		// 拆出规则的 host / port（含前导点域名的端口规则，如 .example.com:443）。
+		ruleHost, rulePort := splitHostPort(rule)
+		portRule := rulePort != ""
+		if portRule && port != rulePort {
+			continue // 端口不符，跳过该规则
 		}
-		if strings.HasPrefix(rule, ".") {
-			base := strings.TrimPrefix(rule, ".")
-			if host == base || strings.HasSuffix(host, rule) {
+		if strings.HasPrefix(ruleHost, ".") {
+			base := strings.TrimPrefix(ruleHost, ".")
+			if host == base || strings.HasSuffix(host, ruleHost) {
 				return true
 			}
-		} else if host == rule {
+		} else if host == ruleHost {
 			return true
 		}
 	}
@@ -119,19 +118,30 @@ func splitHostPort(s string) (string, string) {
 	return s, ""
 }
 
-// splitHostPortRule 判断规则是否为 host:port 形式（不含 CIDR /，不含前导点）。
-func splitHostPortRule(rule string) (string, string, bool) {
-	if strings.Contains(rule, "/") || strings.HasPrefix(rule, ".") {
-		return "", "", false
+// hostWithDefaultPort 返回 URL 的 host:port；无显式端口时按 scheme 补 443/80。
+func hostWithDefaultPort(u *url.URL) string {
+	h, port := splitHostPort(u.Host)
+	if port == "" {
+		switch strings.ToLower(u.Scheme) {
+		case "https":
+			port = "443"
+		case "http":
+			port = "80"
+		}
 	}
-	h, p := splitHostPort(rule)
-	return h, p, p != ""
+	if port == "" {
+		return h
+	}
+	if strings.Contains(h, ":") { // IPv6
+		return "[" + h + "]:" + port
+	}
+	return h + ":" + port
 }
 
 // envProxyURL 按优先级读取环境变量：HGHUB_PROXY > HTTPS_PROXY/HTTP_PROXY > ALL_PROXY。
 // 环境变量回退遵循 NO_PROXY；显式代理不走这里（见 makeProxyFunc）。
 func envProxyURL(req *http.Request) (*url.URL, error) {
-	hostPort := req.URL.Host // 含端口，供 NO_PROXY 的 host:port 规则匹配
+	hostPort := hostWithDefaultPort(req.URL) // 补默认端口后匹配 NO_PROXY 的 host:port 规则
 	if noProxyBypass(hostPort, os.Getenv("NO_PROXY")) || noProxyBypass(hostPort, os.Getenv("no_proxy")) {
 		return nil, nil
 	}

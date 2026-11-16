@@ -126,12 +126,31 @@ func TestNoProxySemantics(t *testing.T) {
 		{"10.1.2.3", "10.0.0.0/8", true},            // CIDR
 		{"11.1.2.3", "10.0.0.0/8", false},
 		{"192.168.1.5", "192.168.0.0/16", true},
-		{"example.com", "*", true},                // 全匹配
-		{"example.com", "foo, example.com", true}, // 规则列表（带空格）
+		{"example.com", "*", true},                          // 全匹配
+		{"example.com", "foo, example.com", true},           // 规则列表（带空格）
+		{"cdn.example.com:443", ".example.com:443", true},   // 前导点 + 端口
+		{"api.example.com:8080", ".example.com:443", false}, // 端口不符
 	}
 	for _, tc := range cases {
 		if got := noProxyBypass(tc.hostPort, tc.rule); got != tc.want {
 			t.Errorf("noProxyBypass(%q, %q) = %v, want %v", tc.hostPort, tc.rule, got, tc.want)
 		}
+	}
+}
+
+// 环境回退时按 scheme 补默认端口：https://example.com 应命中 NO_PROXY=example.com:443。
+func TestEnvProxyNoProxyDefaultPort(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://env-proxy.example:3128")
+	t.Setenv("NO_PROXY", "example.com:443")
+	t.Setenv("HGHUB_PROXY", "")
+	t.Setenv("ALL_PROXY", "")
+	req := &http.Request{URL: &url.URL{Scheme: "https", Host: "example.com"}} // 无显式端口
+	if got, _ := makeProxyFunc(nil)(req); got != nil {
+		t.Fatalf("https default port 443 should hit NO_PROXY, got %v", got)
+	}
+	// 不同端口仍走代理。
+	req2 := &http.Request{URL: &url.URL{Scheme: "https", Host: "example.com:8443"}}
+	if got, _ := makeProxyFunc(nil)(req2); got == nil {
+		t.Fatal("non-443 port should use proxy")
 	}
 }
