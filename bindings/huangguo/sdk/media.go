@@ -231,10 +231,11 @@ func (c *Client) FetchSegment(ctx context.Context, url string, reqHeader map[str
 		headers[k] = v
 	}
 	resp, err := c.transport.Do(ctx, &Request{
-		Method:           "GET",
-		URL:              url,
-		Headers:          headers,
-		MaxResponseBytes: 32 << 20,
+		Method:               "GET",
+		URL:                  url,
+		Headers:              headers,
+		MaxResponseBytes:     32 << 20,
+		FollowMediaRedirects: true, // 逐跳目标守卫 + 5 跳上限 + 禁降级
 	})
 	if err != nil {
 		return SegmentResult{}, fmt.Errorf("%w: %v", ErrTransport, err)

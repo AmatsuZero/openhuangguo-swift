@@ -19,12 +19,13 @@ type Transport interface {
 }
 
 type Request struct {
-	Method           string
-	URL              string
-	Headers          map[string]string
-	Body             []byte
-	MaxResponseBytes int64 // 媒体设大值，API 用默认 8MB
-	NoRedirect       bool  // edge 首版禁自动重定向
+	Method               string
+	URL                  string
+	Headers              map[string]string
+	Body                 []byte
+	MaxResponseBytes     int64 // 媒体设大值，API 用默认 8MB
+	NoRedirect           bool  // edge 首版禁自动重定向
+	FollowMediaRedirects bool  // 媒体跟随有限跳转，每跳做目标守卫
 }
 
 type Response struct {
@@ -95,6 +96,24 @@ func isInternalHost(host string) bool {
 		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }
 
+// mediaCheckRedirect 是媒体请求的 CheckRedirect：最多 5 跳、每跳重新做目标守卫、
+// 禁止 HTTPS→HTTP 降级。net/http 在调用它前已把 req.URL 解析好。
+func mediaCheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("too many media redirects")
+	}
+	if err := guardTarget(req.URL.String()); err != nil {
+		return err
+	}
+	if len(via) > 0 {
+		prev := via[len(via)-1]
+		if strings.EqualFold(prev.URL.Scheme, "https") && !strings.EqualFold(req.URL.Scheme, "https") {
+			return errors.New("media redirect downgrade from https to http refused")
+		}
+	}
+	return nil
+}
+
 // Do 发送请求。目标守卫在开头；Authorization（Bearer）原样放行，区别于 hongguo。
 // 响应默认 8MB 上限；媒体可通过 req.MaxResponseBytes 提高。
 // 代理解析与首版禁重定向策略在 Task 4 补齐。
@@ -120,6 +139,10 @@ func (t *HTTPTransport) Do(ctx context.Context, req *Request) (*Response, error)
 	if req.NoRedirect {
 		clone := *client
 		clone.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &clone
+	} else if req.FollowMediaRedirects {
+		clone := *client
+		clone.CheckRedirect = mediaCheckRedirect
 		client = &clone
 	}
 	resp, err := client.Do(hreq)
