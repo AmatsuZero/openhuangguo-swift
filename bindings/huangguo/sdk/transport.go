@@ -99,7 +99,7 @@ func isInternalHost(host string) bool {
 // mediaCheckRedirect 是媒体请求的 CheckRedirect：最多 5 跳、每跳重新做目标守卫、
 // 禁止 HTTPS→HTTP 降级。net/http 在调用它前已把 req.URL 解析好。
 func mediaCheckRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= 5 {
+	if len(via) > 5 {
 		return errors.New("too many media redirects")
 	}
 	if err := guardTarget(req.URL.String()); err != nil {

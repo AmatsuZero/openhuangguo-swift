@@ -45,15 +45,22 @@ func TestMediaRedirectNoDowngrade(t *testing.T) {
 	}
 }
 
-// 最多 5 跳。
+// 最多跟随 5 跳：via 长度 5（即将跟第 5 跳）应放行，长度 6（第 6 跳）才拒绝。
 func TestMediaRedirectMaxHops(t *testing.T) {
-	via := make([]*http.Request, 5)
-	for i := range via {
-		via[i] = req(t, "https://cdn.example.com/x")
+	via5 := make([]*http.Request, 5)
+	for i := range via5 {
+		via5[i] = req(t, "https://cdn.example.com/x")
 	}
-	err := mediaCheckRedirect(req(t, "https://cdn.example.com/y"), via)
+	if err := mediaCheckRedirect(req(t, "https://cdn.example.com/y"), via5); err != nil {
+		t.Fatalf("5th hop should be allowed, got %v", err)
+	}
+	via6 := make([]*http.Request, 6)
+	for i := range via6 {
+		via6[i] = req(t, "https://cdn.example.com/x")
+	}
+	err := mediaCheckRedirect(req(t, "https://cdn.example.com/y"), via6)
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "redirect") {
-		t.Fatalf("must reject after 5 hops, got %v", err)
+		t.Fatalf("must reject 6th hop, got %v", err)
 	}
 }
 
