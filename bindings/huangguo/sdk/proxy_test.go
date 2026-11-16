@@ -110,3 +110,28 @@ func TestProxyParseErrorRedactsCredentials(t *testing.T) {
 		t.Fatalf("proxy credential leaked in parse error: %s", err)
 	}
 }
+
+// NO_PROXY 支持端口、CIDR、前导点子域、精确匹配。
+func TestNoProxySemantics(t *testing.T) {
+	cases := []struct {
+		hostPort string
+		rule     string
+		want     bool
+	}{
+		{"localhost:8080", "localhost:8080", true},  // 端口精确
+		{"localhost:9090", "localhost:8080", false}, // 端口不符不走 bypass
+		{"api.example.com", ".example.com", true},   // 前导点子域
+		{"example.com", ".example.com", true},       // 含裸域
+		{"notexample.com", ".example.com", false},   // 不能后缀误匹配
+		{"10.1.2.3", "10.0.0.0/8", true},            // CIDR
+		{"11.1.2.3", "10.0.0.0/8", false},
+		{"192.168.1.5", "192.168.0.0/16", true},
+		{"example.com", "*", true},                // 全匹配
+		{"example.com", "foo, example.com", true}, // 规则列表（带空格）
+	}
+	for _, tc := range cases {
+		if got := noProxyBypass(tc.hostPort, tc.rule); got != tc.want {
+			t.Errorf("noProxyBypass(%q, %q) = %v, want %v", tc.hostPort, tc.rule, got, tc.want)
+		}
+	}
+}

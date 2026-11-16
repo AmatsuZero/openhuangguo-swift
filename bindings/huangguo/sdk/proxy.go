@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -57,52 +58,81 @@ func redactProxyURL(u *url.URL) string {
 	return scheme + host + u.Path
 }
 
-// noProxyBypass 判断 host 是否命中 NO_PROXY（命中则直连）。
-// 遵循常见语义： "*" 全匹配；前导 "." 匹配子域；否则精确匹配 host[:port]。
-func noProxyBypass(host, noProxy string) bool {
+// noProxyBypass 判断 host[:port] 是否命中 NO_PROXY（命中则直连）。
+// 支持：* 全匹配、CIDR（IP 或 IP/netmask）、前导点子域、精确 host、host:port。
+func noProxyBypass(hostPort, noProxy string) bool {
 	if noProxy == "" {
 		return false
 	}
+	host, port := splitHostPort(hostPort)
+	host = strings.ToLower(host)
 	for _, entry := range strings.Split(noProxy, ",") {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
+		rule := strings.ToLower(strings.TrimSpace(entry))
+		if rule == "" {
 			continue
 		}
-		if entry == "*" {
+		if rule == "*" {
 			return true
 		}
-		rule := strings.ToLower(entry)
-		// 去掉端口，host 与规则都按主机名比较。
-		if h, _, err := netSplitHostPort(rule); err == nil {
-			rule = h
+		// CIDR：IP 规则（含 /）按网段匹配。
+		if strings.Contains(rule, "/") {
+			if _, cidr, err := net.ParseCIDR(rule); err == nil {
+				if ip := net.ParseIP(host); ip != nil && cidr.Contains(ip) {
+					return true
+				}
+			}
+			continue
 		}
-		h := strings.ToLower(host)
-		if strings.HasPrefix(rule, ".") {
-			if h == strings.TrimPrefix(rule, ".") || strings.HasSuffix(h, rule) {
+		// host:port 规则：端口必须一致，且 host 部分精确。
+		if ruleHost, rulePort, ok := splitHostPortRule(rule); ok && rulePort != "" {
+			if port == rulePort && host == ruleHost {
 				return true
 			}
-		} else if h == rule {
+			continue
+		}
+		if strings.HasPrefix(rule, ".") {
+			base := strings.TrimPrefix(rule, ".")
+			if host == base || strings.HasSuffix(host, rule) {
+				return true
+			}
+		} else if host == rule {
 			return true
 		}
 	}
 	return false
 }
 
-// netSplitHostPort 只拆 host:port， IPv6 用最后一个冒号；无端口返回原串。
-func netSplitHostPort(s string) (string, string, error) {
-	// 简单场景：不含 ':' 直接返回；含 ':' 用 strings.LastIndex 处理 host:port。
-	if !strings.Contains(s, ":") {
-		return s, "", nil
+// splitHostPort 拆 "host" 或 "host:port"（IPv6 用方括号）。
+func splitHostPort(s string) (string, string) {
+	if strings.HasPrefix(s, "[") {
+		if i := strings.Index(s, "]"); i >= 0 {
+			h := s[1:i]
+			if i+1 < len(s) && s[i+1] == ':' {
+				return h, s[i+2:]
+			}
+			return h, ""
+		}
 	}
-	i := strings.LastIndex(s, ":")
-	return s[:i], s[i+1:], nil
+	if i := strings.LastIndex(s, ":"); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
+}
+
+// splitHostPortRule 判断规则是否为 host:port 形式（不含 CIDR /，不含前导点）。
+func splitHostPortRule(rule string) (string, string, bool) {
+	if strings.Contains(rule, "/") || strings.HasPrefix(rule, ".") {
+		return "", "", false
+	}
+	h, p := splitHostPort(rule)
+	return h, p, p != ""
 }
 
 // envProxyURL 按优先级读取环境变量：HGHUB_PROXY > HTTPS_PROXY/HTTP_PROXY > ALL_PROXY。
 // 环境变量回退遵循 NO_PROXY；显式代理不走这里（见 makeProxyFunc）。
 func envProxyURL(req *http.Request) (*url.URL, error) {
-	host := req.URL.Hostname()
-	if noProxyBypass(host, os.Getenv("NO_PROXY")) || noProxyBypass(host, os.Getenv("no_proxy")) {
+	hostPort := req.URL.Host // 含端口，供 NO_PROXY 的 host:port 规则匹配
+	if noProxyBypass(hostPort, os.Getenv("NO_PROXY")) || noProxyBypass(hostPort, os.Getenv("no_proxy")) {
 		return nil, nil
 	}
 	raw := os.Getenv("HGHUB_PROXY")
