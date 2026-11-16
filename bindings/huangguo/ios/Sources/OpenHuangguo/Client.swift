@@ -255,35 +255,56 @@ public final class OpenHuangguoClient: Sendable {
 
     // 单一核心：callback 成功时先写 token 持久化，写入成功才 resolve（硬错误不静默）。
     private func invokePersist<T: Decodable>(_ method: String, _ raw: String) async throws -> T {
-        try await withCheckedThrowingContinuation { cont in
-            let box = CancelBox()
-            let ref = engine.start(method, raw) { [weak self] json in
-                let result: Result<T, Error> = decodeEnvelope(json)
-                if case .success = result, let store = self?.tokenStore {
-                    do {
-                        guard let self else { throw HuangguoError(code: .unknown, message: "client deallocated") }
-                        try store.save(self.engine.getTokenJSON())
-                    } catch {
-                        cont.resume(throwing: error)
-                        box.set({})
-                        return
+        let box = CancelBox()
+        let engine = self.engine
+        let tokenStore = self.tokenStore
+        let out: String = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String, Error>) in
+                let ref = engine.start(method, raw) { json in
+                    let result: Result<T, Error> = decodeEnvelope(json)
+                    if case .success = result, let store = tokenStore {
+                        do {
+                            try store.save(engine.getTokenJSON())
+                        } catch {
+                            box.set({})
+                            cont.resume(throwing: error)
+                            return
+                        }
                     }
+                    box.set({})
+                    cont.resume(returning: json) // 解码交给外层 decodeResultOrThrow
                 }
-                box.set({})
-                cont.resume(with: result)
+                box.set(ref)
             }
-            box.set(ref)
+        } onCancel: {
+            box.fire() // 取消传播到 Go/Callback，使其停止并回调
         }
+        try Task.checkCancellation()
+        return try decodeResultOrThrow(out)
     }
 
     private func invoke<T: Decodable>(_ method: String, _ raw: String) async throws -> T {
-        try await withCheckedThrowingContinuation { cont in
-            let box = CancelBox()
-            let ref = engine.start(method, raw) { json in
-                box.set({})
-                cont.resume(with: decodeEnvelope(json))
+        let box = CancelBox()
+        let engine = self.engine
+        let out: String = try await withTaskCancellationHandler {
+            try await withCheckedContinuation { cont in
+                let ref = engine.start(method, raw) { json in
+                    box.set({})
+                    cont.resume(returning: json)
+                }
+                box.set(ref)
             }
-            box.set(ref)
+        } onCancel: {
+            box.fire()
+        }
+        try Task.checkCancellation()
+        return try decodeResultOrThrow(out)
+    }
+
+    private func decodeResultOrThrow<T: Decodable>(_ json: String) throws -> T {
+        switch decodeEnvelope(json) as Result<T, Error> {
+        case .success(let v): return v
+        case .failure(let e): throw e
         }
     }
 

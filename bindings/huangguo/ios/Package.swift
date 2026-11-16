@@ -19,5 +19,6 @@ let package = Package(
             dependencies: ["OpenHuangguoCore"],
             path: "Sources/OpenHuangguo"
         ),
+        .testTarget(name: "OpenHuangguoTests", dependencies: ["OpenHuangguo"]),
     ]
 )

@@ -42,20 +42,20 @@ class ClientTest {
 
     @Test
     fun feedEncodesArgumentsAndDecodesPage() = runBlocking {
-        val engine = FakeEngine { method, args ->
+        val engine = FakeEngine(reply = { method, args ->
             assertEquals("feed", method)
             assertEquals("[1,20]", args.toString())
             ok(JSONObject().put("items", JSONArray()).put("pagination", JSONObject().put("total", 100)))
-        }
+        })
         val page = OpenHuangguoClient(engine, null, null).feed(1, 20)
         assertEquals(100, page.pagination.total)
     }
 
     @Test
     fun errorsBecomeHuangguoException() = runBlocking {
-        val engine = FakeEngine { _, _ ->
+        val engine = FakeEngine(reply = { _, _ ->
             """{"error":{"code":"AUTHENTICATION_REQUIRED","message":"login","retryable":false,"retryAfterMs":0}}"""
-        }
+        })
         try {
             OpenHuangguoClient(engine, null, null).me()
             fail("no exception")
@@ -69,7 +69,7 @@ class ClientTest {
     fun tokenPersistenceOnlyOnSuccess() = runBlocking {
         val store = MemoryStore()
         val bridge = FakeBridge("""{"origin":"https://huangguoai.com","token":"tok","generation":1}""")
-        val engine = FakeEngine { _, _ -> ok(JSONObject().put("user", JSONObject())) }
+        val engine = FakeEngine(reply = { _, _ -> ok(JSONObject().put("user", JSONObject())) })
         val client = OpenHuangguoClient(engine, bridge, store)
         client.login("u", "p")
         assertTrue(store.saved!!.contains("token"))
