@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -79,4 +80,23 @@ type captureRequestTransport struct{ got *Request }
 func (c *captureRequestTransport) Do(ctx context.Context, r *Request) (*Response, error) {
 	c.got = r
 	return &Response{StatusCode: 200, Body: []byte("x")}, nil
+}
+
+// FetchSegment 保留底层错误链：transport 返回取消错误时 errors.Is 必须识别。
+func TestFetchSegmentErrorChain(t *testing.T) {
+	cErr := &cancelTransport{}
+	c, _ := NewClient(Options{Transport: cErr, Store: NewMemStore(), Base: "https://huangguoai.com"})
+	_, err := c.FetchSegment(context.Background(), "https://cdn.example.com/seg.ts", nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("media cancellation cause lost: %v", err)
+	}
+}
+
+type cancelTransport struct{}
+
+func (cancelTransport) Do(ctx context.Context, r *Request) (*Response, error) {
+	return nil, context.Canceled
 }

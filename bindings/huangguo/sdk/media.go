@@ -238,7 +238,7 @@ func (c *Client) FetchSegment(ctx context.Context, url string, reqHeader map[str
 		FollowMediaRedirects: true, // 逐跳目标守卫 + 5 跳上限 + 禁降级
 	})
 	if err != nil {
-		return SegmentResult{}, fmt.Errorf("%w: %v", ErrTransport, err)
+		return SegmentResult{}, fmt.Errorf("%w: %w", ErrTransport, err)
 	}
 	return SegmentResult{Status: resp.StatusCode, Headers: resp.Headers, Body: resp.Body}, nil
 }

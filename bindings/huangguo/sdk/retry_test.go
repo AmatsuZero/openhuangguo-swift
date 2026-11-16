@@ -92,3 +92,20 @@ func TestRetryBackoffHasJitter(t *testing.T) {
 		}
 	}
 }
+
+// tempNetError：非超时但临时的 net.Error。
+type tempNetError struct{}
+
+func (tempNetError) Error() string   { return "temporary network failure" }
+func (tempNetError) Timeout() bool   { return false }
+func (tempNetError) Temporary() bool { return true }
+
+func TestTransientNonTimeoutNetError(t *testing.T) {
+	if !isTransientTransportError(tempNetError{}) {
+		t.Fatal("non-timeout temporary net.Error should be retryable")
+	}
+	// 取消绝不重试。
+	if isTransientTransportError(context.Canceled) {
+		t.Fatal("context.Canceled must not be transient")
+	}
+}

@@ -130,8 +130,15 @@ func isTransientTransportError(err error) bool {
 		return true
 	}
 	var ne net.Error
-	if errors.As(err, &ne) && ne.Timeout() {
-		return true
+	if errors.As(err, &ne) {
+		if ne.Timeout() {
+			return true
+		}
+		// 非超时的临时错误（如某些代理/连接层的 Temporary()=true）也应重试。
+		// 用接口断言避免直接调用已废弃的 net.Error.Temporary()。
+		if te, ok := ne.(interface{ Temporary() bool }); ok && te.Temporary() {
+			return true
+		}
 	}
 	// syscall 连接类临时错误。
 	for _, code := range []syscall.Errno{
