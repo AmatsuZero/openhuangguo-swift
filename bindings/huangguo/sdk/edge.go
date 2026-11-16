@@ -49,6 +49,12 @@ func (c *Client) edge(ctx context.Context, method, path string, body any, needCr
 		return nil, fmt.Errorf("%w: credentials not allowed for %s", ErrInvalidBase, base)
 	}
 
+	// Origin 绑定：带 token 时必须与其签发的 origin 一致，否则拒绝发送 Bearer。
+	// 防止从 Keychain 恢复的 .com token 被发给同为受信任的 .ai base。
+	if s.Token != "" && s.Origin != base {
+		return nil, fmt.Errorf("%w: token origin %q does not match base %q", ErrAuth, s.Origin, base)
+	}
+
 	enc, ctype := "", ""
 	if body != nil {
 		b, err := json.Marshal(body)

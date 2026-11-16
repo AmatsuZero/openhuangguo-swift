@@ -71,7 +71,7 @@ func (cl *Client) SetTokenJSON(s string) error {
 	if err := json.Unmarshal([]byte(s), &sess); err != nil {
 		return err
 	}
-	return cl.store.Save(sess)
+	return cl.c.RestoreSession(sess)
 }
 
 // GetTokenJSON 输出 {origin,token,generation,user}，供原生层写 Keychain/Keystore。

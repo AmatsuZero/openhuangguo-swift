@@ -42,6 +42,18 @@ func (c *Client) allowedCredentialTarget(origin string) bool {
 	return c.credTrust[origin]
 }
 
+// RestoreSession 供宿主把持久化快照灌回 store；恢复时校验 origin 绑定，
+// 拒绝把另一 base 的 token 恢复到当前客户端（防御跨域误用旧 Bearer）。
+func (c *Client) RestoreSession(s Session) error {
+	c.mu.Lock()
+	base := c.base
+	c.mu.Unlock()
+	if s.Token != "" && s.Origin != base {
+		return fmt.Errorf("%w: restored token origin %q does not match base %q", ErrAuth, s.Origin, base)
+	}
+	return c.store.Save(s)
+}
+
 // SetBase 切换线路：规范化后更新 base、generation++、清空 token。
 // 返回 store.Save 结果——持久化失败必须上报（不谎称成功），但 base 与 generation
 // 在内存已推进，不回滚；宿主须把失败视为硬错误重试/上报（跨重启退出不保证生效）。
