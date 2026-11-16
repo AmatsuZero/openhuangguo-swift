@@ -144,6 +144,12 @@ type RankMetrics struct {
 	Play    int64 `json:"play"`
 }
 
+// RankPage 是 /api/ranks/{kind} 的返回（对照 src/api.ts 的 {type, items}）。
+type RankPage struct {
+	Type  string     `json:"type"`
+	Items []RankItem `json:"items"`
+}
+
 type RankItem struct {
 	Rank         int64       `json:"rank"`
 	VideoID      int64       `json:"video_id"`
