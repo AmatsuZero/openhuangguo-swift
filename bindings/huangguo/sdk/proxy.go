@@ -13,7 +13,10 @@ import (
 func parseProxyURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("invalid proxy URL: %w", err)
+		// 不能 %w 原始解析错误：net/url 把整条原始 URL（含 user:pass）放进错误消息。
+		// 用脱敏后的 userinfo 拼一条通用错误。
+		redacted := redactRawProxyURL(raw)
+		return nil, fmt.Errorf("invalid proxy URL %s", redacted)
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "http" && scheme != "https" {
@@ -23,6 +26,19 @@ func parseProxyURL(raw string) (*url.URL, error) {
 		return nil, fmt.Errorf("proxy URL missing host: %s", redactProxyURL(u))
 	}
 	return u, nil
+}
+
+// redactRawProxyURL 在 URL 解析失败时，按字符串规则抹掉 scheme:// 之后、
+// 最后一个 @ 之前的 userinfo（该段可能畸形、无法用 url.Parse 解析）。
+func redactRawProxyURL(raw string) string {
+	s := raw
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if at := strings.LastIndex(s, "@"); at >= 0 {
+		s = "***:***@" + s[at+1:]
+	}
+	return s
 }
 
 // redactProxyURL 把代理 URL 里的 userinfo 换成 *****，避免日志/错误泄漏凭据。

@@ -99,3 +99,14 @@ func TestHTTPTransportInstallsProxy(t *testing.T) {
 		t.Fatalf("proxy not installed: %v %v", got, err)
 	}
 }
+
+// 畸形代理 URL 的解析错误不得泄漏原始 URL 里的凭据。
+func TestProxyParseErrorRedactsCredentials(t *testing.T) {
+	_, err := parseProxyURL("http://user:supersecret%zz@proxy.example:8080")
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if strings.Contains(err.Error(), "supersecret") {
+		t.Fatalf("proxy credential leaked in parse error: %s", err)
+	}
+}

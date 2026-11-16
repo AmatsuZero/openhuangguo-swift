@@ -80,12 +80,15 @@ func TestTransportErrorChainPreserved(t *testing.T) {
 
 // 退避带抖动：不同 attempt 的延迟不一致且随时间增长。
 func TestRetryBackoffHasJitter(t *testing.T) {
-	d1 := retryDelay(1)
-	d2 := retryDelay(2)
-	if d1 <= 0 || d1 > 200*time.Millisecond {
-		t.Fatalf("attempt 1 delay out of range: %v", d1)
-	}
-	if d2 < 200*time.Millisecond || d2 > 400*time.Millisecond {
-		t.Fatalf("attempt 2 delay out of range: %v", d2)
+	// retryDelay 带 ±50% 抖动：attempt1 base=100ms → [50ms,150ms]；attempt2 base=200ms → [100ms,300ms]。
+	for i := 0; i < 20; i++ {
+		d1 := retryDelay(1)
+		if d1 < 50*time.Millisecond || d1 > 150*time.Millisecond {
+			t.Fatalf("attempt 1 delay out of range: %v", d1)
+		}
+		d2 := retryDelay(2)
+		if d2 < 100*time.Millisecond || d2 > 300*time.Millisecond {
+			t.Fatalf("attempt 2 delay out of range: %v", d2)
+		}
 	}
 }
