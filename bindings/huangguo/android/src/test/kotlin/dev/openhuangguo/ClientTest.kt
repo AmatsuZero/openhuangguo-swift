@@ -21,7 +21,8 @@ class ClientTest {
         val calls = mutableListOf<Pair<String, String>>()
         override fun start(method: String, args: String, done: (String) -> Unit): () -> Unit {
             calls += method to args
-            done(reply(method, JSONArray(args)))
+            val out = reply(method, JSONArray(args))
+            if (out.isNotEmpty()) done(out) // 空串表示"不立即回调"，用于测试取消
             return { onCancel?.invoke() }
         }
     }
@@ -78,7 +79,9 @@ class ClientTest {
     @Test
     fun cancellingTheCoroutineCancelsTheCall() = runBlocking {
         val cancelled = CompletableDeferred<Unit>()
-        val engine = FakeEngine({ _, _ -> ok(JSONObject()) }, onCancel = { cancelled.complete(Unit) })
+        // reply 返回空串 → FakeEngine 不调用 done，让协程挂起在 callRaw；
+        // 这样 job.cancel() 才会触发 invokeOnCancellation → onCancel。
+        val engine = FakeEngine(reply = { _, _ -> "" }, onCancel = { cancelled.complete(Unit) })
         val job = async(start = CoroutineStart.UNDISPATCHED) { OpenHuangguoClient(engine, null, null).rank("hot") }
         job.cancel()
         withTimeout(5_000) { cancelled.await() }
