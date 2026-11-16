@@ -1,0 +1,116 @@
+name: verify
+
+# 所有验证 job 收在此可复用 workflow；ci.yml 与 hg-xcf.yml 都调用它。
+# hg-xcf.yml 的 release job 通过同 workflow 内 needs 等待本 workflow 全绿。
+on:
+  workflow_call:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
+  pull_request:
+    paths-ignore: ["**.md", "docs/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOMOBILE_VERSION: v0.0.0-20261011034528-197770444867
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: bindings/huangguo/core/go.mod
+          cache-dependency-path: bindings/huangguo/core/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+      - name: vet + test (逐 module, GOWORK=off)
+        run: make vet test
+      - name: generated types up to date
+        run: make gen-check
+
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: bindings/huangguo/core/go.mod
+          cache-dependency-path: bindings/huangguo/core/go.sum
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@$GOMOBILE_VERSION golang.org/x/mobile/cmd/gobind@$GOMOBILE_VERSION
+          gomobile init
+      - name: Build xcframework
+        run: bindings/huangguo/build.sh ios
+      - name: macOS slice validation
+        working-directory: bindings/huangguo/build
+        run: |
+          binary="$(find OpenHuangguoCore.xcframework -type f -path '*/macos-*/*' -name OpenHuangguoCore -print -quit)"
+          test -n "$binary"
+          architectures="$(lipo -archs "$binary")"
+          for arch in arm64 x86_64; do
+            case " $architectures " in *" $arch "*) ;; *) echo "missing macOS arch $arch"; exit 1 ;; esac
+          done
+      - name: Swift unit tests (macOS slice)
+        working-directory: bindings/huangguo/ios
+        run: swift test
+      - name: Build iOS device + simulator
+        working-directory: bindings/huangguo/ios
+        run: |
+          swift build --triple arm64-apple-ios15.0 --sdk "$(xcrun --sdk iphoneos --show-sdk-path)"
+          swift build --triple arm64-apple-ios15.0-simulator --sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)"
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: bindings/huangguo/core/go.mod
+          cache-dependency-path: bindings/huangguo/core/go.sum
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@$GOMOBILE_VERSION golang.org/x/mobile/cmd/gobind@$GOMOBILE_VERSION
+          gomobile init
+      - name: Build AAR + Kotlin unit tests
+        run: bindings/huangguo/build.sh android
+      - name: Free disk space for emulator
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Connected Android tests (player/seek)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disk-size: 2G
+          working-directory: bindings/huangguo/android
+          script: ./gradlew connectedDebugAndroidTest
+
+  player-e2e:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: SegmentResult JSON contract (0x00/0xff, 206, headers)
+        run: |
+          cd bindings/huangguo/sdk
+          GOWORK=off go test ./... -run 'TestFetchSegmentRange|TestRewritePlaylist|TestDecryptCover' -count=1

@@ -6,6 +6,6 @@ go.work.sum
 *.xcframework.zip
 build/
 bin/
-.openhongguo-build/
+.openhuangguo-build/
 .gradle/
 **/build/

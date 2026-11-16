@@ -1,0 +1,82 @@
+name: hg-xcf
+
+# 构建 OpenHuangguoCore.xcframework 并在**本独立仓库**发布二进制 release。
+# 不写任何 hongguo 文件，也不触发源仓库的 release.yml。
+# 触发：hg-xcf-v* 标签 / 手动。
+on:
+  push:
+    tags: ['hg-xcf-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "资产 tag，如 hg-xcf-v0.1.0"
+        required: true
+        default: "hg-xcf-v0.1.0"
+
+permissions:
+  contents: write
+
+env:
+  GOMOBILE_VERSION: v0.0.0-20261011034528-197770444867
+
+jobs:
+  verify:
+    uses: ./.github/workflows/verify.yml
+
+  release:
+    needs: verify
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: bindings/huangguo/core/go.mod
+          cache-dependency-path: bindings/huangguo/core/go.sum
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@$GOMOBILE_VERSION golang.org/x/mobile/cmd/gobind@$GOMOBILE_VERSION
+          gomobile init
+
+      - name: Build xcframework
+        run: bindings/huangguo/build.sh ios
+
+      - name: Zip + checksum
+        id: pkg
+        run: |
+          cd bindings/huangguo/build
+          zip -r OpenHuangguoCore.xcframework.zip OpenHuangguoCore.xcframework
+          CK=$(shasum -a 256 OpenHuangguoCore.xcframework.zip | awk '{print $1}')
+          echo "checksum=$CK" >> "$GITHUB_OUTPUT"
+
+      - name: Backfill root Package.swift precisely
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          python3 scripts/fix_huangguo_binarytarget.py "$TAG" "${{ steps.pkg.outputs.checksum }}"
+
+      - name: Commit Package.swift to main
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
+          git config user.email "ci@openhuangguo.local"
+          git config user.name "openhuangguo-ci"
+          git add Package.swift
+          git commit -m "ci: point binaryTarget at ${TAG}" || echo "no change"
+          git push origin main
+
+      - name: Publish binary release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: OpenHuangguoCore ${{ github.event.inputs.tag || github.ref_name }}
+          body: |
+            OpenHuangguoCore.xcframework (iOS + macOS slices) built with gomobile.
+            Binary asset tag; SwiftPM consumers use the standard semver tag vX.Y.Z.
+          files: bindings/huangguo/build/OpenHuangguoCore.xcframework.zip
+          make_latest: false
