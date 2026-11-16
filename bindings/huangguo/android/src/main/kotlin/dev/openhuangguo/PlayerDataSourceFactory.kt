@@ -44,8 +44,8 @@ private class HuangguoDataSource(
 
         val upstreamUrl = upstreamURL(uri) ?: throw IllegalArgumentException("invalid local media URL: $uri")
         val headers = mutableMapOf<String, String>()
-        if (dataSpec.length != androidx.media3.common.C.LENGTH_UNSET) {
-            headers["Range"] = "bytes=${dataSpec.position}-${dataSpec.position + dataSpec.length - 1}"
+        if (dataSpec.length != androidx.media3.common.C.LENGTH_UNSET.toLong()) {
+            headers["Range"] = "bytes=${dataSpec.position}-${dataSpec.position + dataSpec.length - 1L}"
         }
         result = runBlocking { client.fetchSegment(upstreamUrl, headers) }
         val r = result!!
@@ -59,8 +59,9 @@ private class HuangguoDataSource(
         opened = true
         transferInitializing(dataSpec)
         transferStarted(dataSpec)
-        val len = result!!.headers["Content-Length"]?.toLongOrNull() ?: androidx.media3.common.C.LENGTH_UNSET
-        return if (len != androidx.media3.common.C.LENGTH_UNSET) len - dataSpec.position else len
+        val lengthUnset = androidx.media3.common.C.LENGTH_UNSET.toLong()
+        val len: Long = result!!.headers["Content-Length"]?.toLongOrNull() ?: lengthUnset
+        return if (len != lengthUnset) len - dataSpec.position else len
     }
 
     override fun read(target: ByteArray, offset: Int, length: Int): Int {
