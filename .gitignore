@@ -9,3 +9,5 @@ bin/
 .openhuangguo-build/
 .gradle/
 **/build/
+__pycache__/
+*.pyc
