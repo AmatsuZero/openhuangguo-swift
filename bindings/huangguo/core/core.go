@@ -76,10 +76,7 @@ func (cl *Client) SetTokenJSON(s string) error {
 
 // GetTokenJSON 输出 {origin,token,generation,user}，供原生层写 Keychain/Keystore。
 func (cl *Client) GetTokenJSON() (string, error) {
-	sess, err := cl.store.Load()
-	if err != nil {
-		return "", err
-	}
+	sess := cl.c.ExportSession()
 	b, err := json.Marshal(sess)
 	return string(b), err
 }

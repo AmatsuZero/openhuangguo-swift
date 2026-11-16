@@ -99,9 +99,13 @@ func (c *Client) edge(ctx context.Context, method, path string, body any, needCr
 	}
 
 	// 提交结果前校验 generation 未变：请求期间若切域名/登出，丢弃本次响应。
-	cur, _ := c.store.Load()
-	if cur.Generation != s.Generation {
+	// 从内存快照读（受同一把锁保护），用当前 base 再核对一次 origin 绑定。
+	cur, curBase := c.snapshot()
+	if cur.Generation != s.Generation || curBase != base {
 		return nil, errors.New("session generation changed during request")
+	}
+	if s.Token != "" && s.Origin != curBase {
+		return nil, fmt.Errorf("%w: token origin %q no longer matches base %q", ErrAuth, s.Origin, curBase)
 	}
 	return data, nil
 }

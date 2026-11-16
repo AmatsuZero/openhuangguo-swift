@@ -46,29 +46,28 @@ func (c *Client) allowedCredentialTarget(origin string) bool {
 // 拒绝把另一 base 的 token 恢复到当前客户端（防御跨域误用旧 Bearer）。
 func (c *Client) RestoreSession(s Session) error {
 	c.mu.Lock()
-	base := c.base
-	c.mu.Unlock()
-	if s.Token != "" && s.Origin != base {
-		return fmt.Errorf("%w: restored token origin %q does not match base %q", ErrAuth, s.Origin, base)
+	defer c.mu.Unlock()
+	if s.Token != "" && s.Origin != c.base {
+		return fmt.Errorf("%w: restored token origin %q does not match base %q", ErrAuth, s.Origin, c.base)
 	}
+	c.session = s
 	return c.store.Save(s)
 }
 
-// SetBase 切换线路：规范化后更新 base、generation++、清空 token。
-// 返回 store.Save 结果——持久化失败必须上报（不谎称成功），但 base 与 generation
-// 在内存已推进，不回滚；宿主须把失败视为硬错误重试/上报（跨重启退出不保证生效）。
+// SetBase 切换线路：规范化后在同一临界区内更新 base、generation++、清空 token。
+// 内存先推进、再写穿 store；持久化失败上报（不谎称成功）、不回滚；宿主须视为硬错误。
+// 同一把锁保证任何 snapshot 都看不到"新 base + 旧 token"的中间态。
 func (c *Client) SetBase(raw string) error {
 	b, err := normalizeBase(raw)
 	if err != nil {
 		return err
 	}
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.base = b
-	c.mu.Unlock()
-	s, _ := c.store.Load()
-	s.Generation++
-	s.Origin = ""
-	s.Token = ""
-	s.User = nil
-	return c.store.Save(s)
+	c.session.Generation++
+	c.session.Origin = ""
+	c.session.Token = ""
+	c.session.User = nil
+	return c.store.Save(c.session)
 }

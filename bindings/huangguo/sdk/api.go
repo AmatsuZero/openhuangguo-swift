@@ -72,11 +72,8 @@ func (c *Client) Login(ctx context.Context, username, password string) (*AuthRes
 	if resp.Token == "" {
 		return nil, errors.New("登录返回缺少 token")
 	}
-	after, _ := c.snapshot()
-	if after.Generation != before.Generation {
-		return nil, errors.New("登录期间线路已变化，请重新登录")
-	}
-	if err := c.store.Save(Session{Origin: base, Token: resp.Token, Generation: before.Generation, User: resp.User}); err != nil {
+	if err := c.commitLogin(before.Generation, base,
+		Session{Origin: base, Token: resp.Token, Generation: before.Generation, User: resp.User}); err != nil {
 		return nil, err
 	}
 	return &AuthResult{User: resp.User}, nil
@@ -106,25 +103,18 @@ func (c *Client) Register(ctx context.Context, username, password, email string)
 	if resp.Token == "" {
 		return nil, errors.New("注册返回缺少 token")
 	}
-	after, _ := c.snapshot()
-	if after.Generation != before.Generation {
-		return nil, errors.New("注册期间线路已变化，请重新登录")
-	}
-	if err := c.store.Save(Session{Origin: base, Token: resp.Token, Generation: before.Generation, User: resp.User}); err != nil {
+	if err := c.commitLogin(before.Generation, base,
+		Session{Origin: base, Token: resp.Token, Generation: before.Generation, User: resp.User}); err != nil {
 		return nil, err
 	}
 	return &AuthResult{User: resp.User}, nil
 }
 
 // Logout 忽略服务端错误（对齐 HGhub），但本地清理失败必须上报。
+// 在同一临界区内 generation++ 并清空会话，杜绝并发请求读到旧 token。
 func (c *Client) Logout(ctx context.Context) error {
 	_, _ = c.edge(ctx, "POST", "/api/account/logout", nil, false)
-	s, _ := c.store.Load()
-	s.Generation++
-	s.Origin = ""
-	s.Token = ""
-	s.User = nil
-	return c.store.Save(s)
+	return c.clearSession()
 }
 
 func (c *Client) Me(ctx context.Context) (*model.User, error) {
@@ -137,18 +127,14 @@ func (c *Client) Me(ctx context.Context) (*model.User, error) {
 	if err != nil {
 		return nil, err
 	}
-	after, base := c.snapshot()
-	if after.Generation != before.Generation {
-		return nil, errors.New("读取账号期间线路已变化")
-	}
-	if after.Token != "" {
-		raw, _ := json.Marshal(u)
-		s := after
-		s.Origin = base
-		s.User = raw
-		if err := c.store.Save(s); err != nil {
-			return nil, err
+	// 在 generation 未变时才回写 user；比较与写在 commitSession 的同一临界区内。
+	if err := c.commitSession(before.Generation, func(s *Session) {
+		if s.Token == "" {
+			return
 		}
+		s.User, _ = json.Marshal(u)
+	}); err != nil {
+		return nil, errors.New("读取账号期间线路已变化")
 	}
 	return u, nil
 }
