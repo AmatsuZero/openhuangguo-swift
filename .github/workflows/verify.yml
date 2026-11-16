@@ -1,15 +1,9 @@
 name: verify
 
 # 所有验证 job 收在此可复用 workflow；ci.yml 与 hg-xcf.yml 都调用它。
-# hg-xcf.yml 的 release job 通过同 workflow 内 needs 等待本 workflow 全绿。
+# 只保留 workflow_call：push/PR 由 ci.yml 触发，避免同一 push 触发两次（重复 + 互相 cancel）。
 on:
   workflow_call:
-  push:
-    branches: [main]
-    paths-ignore: ["**.md", "docs/**"]
-  pull_request:
-    paths-ignore: ["**.md", "docs/**"]
-  workflow_dispatch:
 
 concurrency:
   group: verify-${{ github.ref }}
@@ -110,6 +104,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: bindings/huangguo/core/go.mod
+          cache-dependency-path: bindings/huangguo/core/go.sum
       - name: SegmentResult JSON contract (0x00/0xff, 206, headers)
         run: |
           cd bindings/huangguo/sdk
