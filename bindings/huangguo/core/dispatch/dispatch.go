@@ -50,7 +50,7 @@ var methods = map[string]method{
 		if err := arg(a, 0, &cate); err != nil {
 			return nil, err
 		}
-		if err := args2(a[1:], &page, &size); err != nil {
+		if err := argsN(a, 1, &page, &size); err != nil {
 			return nil, err
 		}
 		return c.Category(ctx, cate, page, size)
@@ -68,7 +68,7 @@ var methods = map[string]method{
 		if err := arg(a, 0, &q); err != nil {
 			return nil, err
 		}
-		if err := args2(a[1:], &page, &size); err != nil {
+		if err := argsN(a, 1, &page, &size); err != nil {
 			return nil, err
 		}
 		return c.Search(ctx, q, page, size)
@@ -114,7 +114,7 @@ var methods = map[string]method{
 		if err := arg(a, 1, &ep); err != nil {
 			return nil, err
 		}
-		if err := args2(a[2:], &page, &size); err != nil {
+		if err := argsN(a, 2, &page, &size); err != nil {
 			return nil, err
 		}
 		return c.Comments(ctx, id, ep, page, size)
@@ -203,7 +203,7 @@ var methods = map[string]method{
 		if err := arg(a, 0, &id); err != nil {
 			return nil, err
 		}
-		if err := args2(a[1:], &page, &size); err != nil {
+		if err := argsN(a, 1, &page, &size); err != nil {
 			return nil, err
 		}
 		return c.PostComments(ctx, id, page, size)
@@ -291,6 +291,21 @@ func args2(a []json.RawMessage, v0, v1 any) error {
 		return err
 	}
 	return arg(a, 1, v1)
+}
+
+// argsN 从 start 开始解析必需参数。与直接切片 a[start:] 不同，
+// 参数不足时返回明确的参数错误而不是 panic（崩溃整个宿主进程）。
+func argsN(a []json.RawMessage, start int, vs ...any) error {
+	for i, v := range vs {
+		idx := start + i
+		if idx >= len(a) || string(a[idx]) == "null" {
+			return fmt.Errorf("argument %d: missing required argument", idx+1)
+		}
+		if err := json.Unmarshal(a[idx], v); err != nil {
+			return fmt.Errorf("argument %d: %v", idx+1, err)
+		}
+	}
+	return nil
 }
 
 // ErrorCode 是绑定使用的错误码及其对应错误。

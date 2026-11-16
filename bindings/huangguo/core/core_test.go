@@ -26,6 +26,21 @@ func newTestClient(t *testing.T) *Client {
 	return &Client{c: sc, store: store}
 }
 
+type panicTransport struct{}
+
+func (panicTransport) Do(ctx context.Context, r *sdk.Request) (*sdk.Response, error) {
+	panic("boom in transport")
+}
+
+func mustPanicClient(t *testing.T) *sdk.Client {
+	t.Helper()
+	c, err := sdk.NewClient(sdk.Options{Transport: panicTransport{}, Store: sdk.NewMemStore(), Base: "https://huangguoai.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
 type testCallback struct{ ch chan string }
 
 func (cb *testCallback) Done(s string) { cb.ch <- s }
@@ -102,5 +117,30 @@ func TestNewClientConfigJSON(t *testing.T) {
 	}
 	if _, err := NewClient(`not json`, nil); err == nil {
 		t.Fatal("expected error for invalid configJSON")
+	}
+}
+
+// SDK 内部 panic 必须转成错误信封，且 callback 恰好一次，不漏到 gomobile 线程。
+func TestStartPanicBecomesErrorEnvelope(t *testing.T) {
+	// 注入一个会 panic 的 Transport，通过 fetchSegment 间接触发。
+	cl := newTestClient(t)
+	cl.c = mustPanicClient(t)
+
+	cb := &testCallback{ch: make(chan string, 2)}
+	call := cl.Start("fetchSegment", `["https://cdn.example.com/seg.ts",{}]`, cb)
+	defer call.Cancel()
+	select {
+	case got := <-cb.ch:
+		if !strings.Contains(got, `"error"`) || !strings.Contains(got, "panic") {
+			t.Fatalf("expected panic error envelope, got %s", got)
+		}
+		// 恰好一次：不应再有第二次回调。
+		select {
+		case extra := <-cb.ch:
+			t.Fatalf("callback called twice: %s", extra)
+		case <-time.After(100 * time.Millisecond):
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("callback timeout")
 	}
 }

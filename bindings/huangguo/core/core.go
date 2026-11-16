@@ -86,8 +86,17 @@ func (cl *Client) Start(method, argsJSON string, callback Callback) *Call {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		defer cancel()
-		v, err := dispatch.Call(ctx, cl.c, method, argsJSON)
-		callback.Done(envelope(v, err))
+		// 保证一次调用恰好一次 callback：把 panic 转成错误信封，在唯一的 defer 里回传，
+		// 既不把 panic 漏到 gomobile 线程，也不会重复调用 Done。
+		var v any
+		var err error
+		defer func() {
+			if r := recover(); r != nil {
+				v, err = nil, fmt.Errorf("panic: %v", r)
+			}
+			callback.Done(envelope(v, err))
+		}()
+		v, err = dispatch.Call(ctx, cl.c, method, argsJSON)
 	}()
 	return &Call{cancel: cancel}
 }
