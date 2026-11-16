@@ -24,6 +24,7 @@ type Request struct {
 	Headers          map[string]string
 	Body             []byte
 	MaxResponseBytes int64 // 媒体设大值，API 用默认 8MB
+	NoRedirect       bool  // edge 首版禁自动重定向
 }
 
 type Response struct {
@@ -106,7 +107,13 @@ func (t *HTTPTransport) Do(ctx context.Context, req *Request) (*Response, error)
 	for k, v := range req.Headers {
 		hreq.Header.Set(k, v)
 	}
-	resp, err := t.client.Do(hreq)
+	client := t.client
+	if req.NoRedirect {
+		clone := *client
+		clone.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &clone
+	}
+	resp, err := client.Do(hreq)
 	if err != nil {
 		return nil, err
 	}
