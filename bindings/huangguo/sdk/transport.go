@@ -45,7 +45,16 @@ type HTTPTransport struct {
 }
 
 func NewHTTPTransport(cfg TransportConfig) *HTTPTransport {
-	return &HTTPTransport{client: &http.Client{Timeout: 30 * time.Second}, cfg: cfg}
+	base := &http.Transport{
+		Proxy:                 makeProxyFunc(cfg.Proxy), // 显式/环境代理，见 proxy.go
+		ForceAttemptHTTP2:     true,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	}
+	return &HTTPTransport{
+		client: &http.Client{Timeout: 30 * time.Second, Transport: base},
+		cfg:    cfg,
+	}
 }
 
 // guardTarget 对目标 URL 做轻守卫：拒绝 userinfo、非 http(s)、内网/回环目标。
