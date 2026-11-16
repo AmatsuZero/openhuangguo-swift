@@ -39,9 +39,13 @@ func NewClient(o Options) (*Client, error) {
 	if o.Store == nil {
 		return nil, errors.New("Store required")
 	}
-	base := o.Base
-	if base == "" {
-		base = "https://huangguoai.com"
+	baseRaw := o.Base
+	if baseRaw == "" {
+		baseRaw = "https://huangguoai.com"
+	}
+	base, err := normalizeBase(baseRaw)
+	if err != nil {
+		return nil, err
 	}
 	trust := o.CredTrust
 	if trust == nil {

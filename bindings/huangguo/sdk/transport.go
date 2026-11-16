@@ -66,16 +66,23 @@ func guardTarget(rawURL string) error {
 	if host == "" {
 		return errors.New("reject target with empty host")
 	}
-	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") {
+	if isInternalHost(host) {
 		return errors.New("reject private/loopback target")
 	}
-	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
-			ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-			return errors.New("reject private/loopback target")
-		}
-	}
 	return nil
+}
+
+// isInternalHost 判断 host 是否为回环/内网/链路本地地址。base 与目标 URL 共用。
+func isInternalHost(host string) bool {
+	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }
 
 // Do 发送请求。目标守卫在开头；Authorization（Bearer）原样放行，区别于 hongguo。
