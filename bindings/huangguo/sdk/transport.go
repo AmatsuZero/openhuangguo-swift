@@ -32,6 +32,7 @@ type Response struct {
 	StatusCode int
 	Headers    map[string]string
 	Body       []byte
+	URL        string // Final request URL after redirects, for relative HLS resources.
 }
 
 // TransportConfig 由 configJSON 构造。Proxy: nil=走环境；指向 ""=强制直连；指向 URL=显式代理。
@@ -110,16 +111,36 @@ func mediaCheckRedirect(req *http.Request, via []*http.Request) error {
 		if strings.EqualFold(prev.URL.Scheme, "https") && !strings.EqualFold(req.URL.Scheme, "https") {
 			return errors.New("media redirect downgrade from https to http refused")
 		}
-		if !strings.EqualFold(prev.URL.Scheme, req.URL.Scheme) || !strings.EqualFold(prev.URL.Host, req.URL.Host) {
+		// net/http copies initial headers for each redirect. Once any hop has
+		// crossed origins, never restore credentials, including custom auth keys.
+		crossed := !sameMediaOrigin(prev.URL, req.URL)
+		for i := 1; i < len(via); i++ {
+			crossed = crossed || !sameMediaOrigin(via[i-1].URL, via[i].URL)
+		}
+		if crossed {
 			for key := range req.Header {
-				lower := strings.ToLower(key)
-				if strings.HasPrefix(lower, "x-cdn-") || lower == "authorization" || lower == "cookie" {
+				switch strings.ToLower(key) {
+				case "range", "if-range", "if-none-match", "if-modified-since", "accept", "accept-encoding", "user-agent":
+				default:
 					req.Header.Del(key)
 				}
 			}
 		}
 	}
 	return nil
+}
+
+func sameMediaOrigin(a, b *url.URL) bool {
+	port := func(u *url.URL) string {
+		if p := u.Port(); p != "" {
+			return p
+		}
+		if strings.EqualFold(u.Scheme, "https") {
+			return "443"
+		}
+		return "80"
+	}
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Hostname(), b.Hostname()) && port(a) == port(b)
 }
 
 // Do 发送请求。目标守卫在开头；Authorization（Bearer）原样放行，区别于 hongguo。
@@ -175,5 +196,10 @@ func (t *HTTPTransport) Do(ctx context.Context, req *Request) (*Response, error)
 			headers[k] = values[0]
 		}
 	}
-	return &Response{StatusCode: resp.StatusCode, Headers: headers, Body: body}, nil
+	finalURL := req.URL
+	// Injected RoundTrippers may omit Response.Request.
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	return &Response{StatusCode: resp.StatusCode, Headers: headers, Body: body, URL: finalURL}, nil
 }

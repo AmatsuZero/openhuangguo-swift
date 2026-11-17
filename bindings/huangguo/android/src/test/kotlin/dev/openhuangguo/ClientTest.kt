@@ -11,6 +11,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import java.io.IOException
 
 /** 用假 Engine / TokenBridge 代替 Go core 库，检查参数编码、结果解码、错误映射、取消与 token 持久化。 */
 class ClientTest {
@@ -85,5 +86,61 @@ class ClientTest {
         val job = async(start = CoroutineStart.UNDISPATCHED) { OpenHuangguoClient(engine, null, null).rank("hot") }
         job.cancel()
         withTimeout(5_000) { cancelled.await() }
+    }
+
+    @Test
+    fun segmentResultRetainsFinalResponseUrl() = runBlocking {
+        val engine = FakeEngine(reply = { method, _ ->
+            assertEquals("fetchSegment", method)
+            ok(JSONObject()
+                .put("status", 206)
+                .put("headers", JSONObject().put("Content-Range", "bytes 10-12/100"))
+                .put("body", "AQID")
+                .put("url", "https://cdn.example/final.ts"))
+        })
+
+        val result = OpenHuangguoClient(engine, null, null)
+            .fetchSegment("https://cdn.example/original.ts", emptyMap())
+
+        assertEquals("https://cdn.example/final.ts", result.url)
+    }
+
+    @Test
+    fun playbackRequestPolicyScopesSignedHeadersAndBuildsOpenEndedRanges() {
+        val signed = mapOf("X-Cdn-Auth" to "signed", "X-Cdn-App" to "player")
+        val initial = mapOf("X-Cdn-Auth" to "stale", "User-Agent" to "client")
+
+        assertEquals(
+            mapOf("User-Agent" to "client", "X-Cdn-Auth" to "signed", "X-Cdn-App" to "player", "Range" to "bytes=10-"),
+            PlaybackRequestPolicy.headers(
+                rootUrl = "HTTPS://CDN.example:443/master.m3u8",
+                requestUrl = "https://cdn.EXAMPLE/part.ts",
+                requestHeaders = initial,
+                signedHeaders = signed,
+                position = 10,
+                length = -1,
+            ),
+        )
+        assertEquals(
+            mapOf("User-Agent" to "client", "Range" to "bytes=10-14"),
+            PlaybackRequestPolicy.headers(
+                rootUrl = "https://cdn.example/master.m3u8",
+                requestUrl = "https://other.example/part.ts",
+                requestHeaders = initial,
+                signedHeaders = signed,
+                position = 10,
+                length = 5,
+            ),
+        )
+    }
+
+    @Test
+    fun playbackRequestPolicyRejectsUnsupportedManifestMethod() {
+        try {
+            PlaybackRequestPolicy.requireSupportedManifestMethod("POST")
+            fail("expected unsupported manifest method")
+        } catch (error: IOException) {
+            assertTrue(error.message!!.contains("POST"))
+        }
     }
 }

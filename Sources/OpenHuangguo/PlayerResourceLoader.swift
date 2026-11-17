@@ -1,46 +1,84 @@
 import AVFoundation
 import Foundation
+import UniformTypeIdentifiers
 
-/// 把 Core 的纯函数媒体工具接到 AVPlayer 的资源加载层。
-///
-/// Core 的 RewritePlaylist 把 KEY / 分片 / 子清单 URI 改写成
-/// `hg://localhost/seg?u=<pct>`（u 为上游完整 URL 的 percent 编码）。
-/// 本 loader 还原上游 URL，经 Core 的 fetchSegment / rewritePlaylist 取回资源，
-/// 并把 Range 与 206 / Content-Range 正确应答给播放器。
+/// Loads playback resources through Core. Retain this loader while its asset is in use.
 @available(iOS 15.0, macOS 12.0, *)
 public final class PlayerResourceLoader: NSObject, AVAssetResourceLoaderDelegate, @unchecked Sendable {
-
     private let client: OpenHuangguoClient
     private let scheme: String
     private let host: String
+    private let playback: PlayInfo?
+    private let playbackURL: URL?
     private let queue = DispatchQueue(label: "dev.openhuangguo.player.loader", qos: .userInitiated)
+    // Accessed only on queue, including completion and cancellation.
+    private var tasks: [ObjectIdentifier: Task<Void, Never>] = [:]
 
-    public init(client: OpenHuangguoClient, scheme: String = "hg", host: String = "localhost") {
+    public init(client: OpenHuangguoClient, scheme: String = "hg", host: String = "localhost",
+                playback: PlayInfo? = nil, playbackURL: URL? = nil) {
         self.client = client
         self.scheme = scheme
         self.host = host
+        self.playback = playback
+        self.playbackURL = playbackURL ?? playback.flatMap { URL(string: $0.videoUrl) }
     }
 
-    /// 创建可交给 AVPlayer 的 AVAsset；scheme 必须与传给 RewritePlaylist 的一致。
-    public func asset(forLocalURL local: URL) -> AVAsset {
-        AVAsset(url: local)
+    /// Creates the signed playback asset; playbackURL may select the HEVC stream.
+    public func asset() throws -> AVURLAsset {
+        try validateManifestMethod()
+        guard let url = playbackURL, ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
+            throw failure("invalid playback URL")
+        }
+        var local = URLComponents()
+        local.scheme = scheme
+        local.host = host
+        local.path = "/seg"
+        local.queryItems = [URLQueryItem(name: "u", value: url.absoluteString)]
+        guard let localURL = local.url else { throw failure("invalid local media URL") }
+        return asset(forLocalURL: localURL)
+    }
+
+    public func asset(forLocalURL local: URL) -> AVURLAsset {
+        let asset = AVURLAsset(url: local)
+        asset.resourceLoader.setDelegate(self, queue: queue)
+        return asset
     }
 
     public func resourceLoader(_ resourceLoader: AVAssetResourceLoader,
-                               shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest) -> Bool {
-        guard let url = loadingRequest.request.url,
+                               shouldWaitForLoadingOfRequestedResource request: AVAssetResourceLoadingRequest) -> Bool {
+        guard let url = request.request.url,
               let upstream = Self.upstreamURL(from: url, scheme: scheme, host: host) else {
-            loadingRequest.finishLoading(with: NSError(domain: "dev.openhuangguo", code: -1,
-                                                        userInfo: [NSLocalizedDescriptionKey: "invalid local media URL"]))
+            request.finishLoading(with: failure("invalid local media URL"))
             return true
         }
-        queue.async { [weak self] in
-            guard let self else { return }
-            Task {
+        queue.async { [self] in
+            guard !request.isCancelled else { return }
+            let id = ObjectIdentifier(request)
+            let dataRequest = request.dataRequest
+            let offset = dataRequest?.currentOffset ?? 0
+            let length = dataRequest.flatMap { data -> Int? in
+                if data.requestsAllDataToEndOfResource { return nil }
+                let consumed = max(0, data.currentOffset - data.requestedOffset)
+                return max(0, data.requestedLength - Int(consumed))
+            }
+            tasks[id] = Task { [self] in
                 do {
-                    try await self.serve(loadingRequest, upstream: upstream)
+                    let resource = try await self.load(upstream, offset: offset, length: length)
+                    self.queue.async { [self] in
+                        guard tasks.removeValue(forKey: id) != nil, !request.isCancelled else { return }
+                        if let info = request.contentInformationRequest {
+                            info.contentLength = resource.contentLength
+                            info.contentType = resource.contentType
+                            info.isByteRangeAccessSupported = true
+                        }
+                        request.dataRequest?.respond(with: resource.body)
+                        request.finishLoading()
+                    }
                 } catch {
-                    loadingRequest.finishLoading(with: error)
+                    self.queue.async { [self] in
+                        guard tasks.removeValue(forKey: id) != nil, !request.isCancelled else { return }
+                        request.finishLoading(with: error)
+                    }
                 }
             }
         }
@@ -48,76 +86,115 @@ public final class PlayerResourceLoader: NSObject, AVAssetResourceLoaderDelegate
     }
 
     public func resourceLoader(_ resourceLoader: AVAssetResourceLoader,
-                               didCancel loadingRequest: AVAssetResourceLoadingRequest) {
-        // Core 的 Start/Call 在 Task 取消时由调用方取消；此处不持有长任务引用。
+                               didCancel request: AVAssetResourceLoadingRequest) {
+        queue.async { [self] in tasks.removeValue(forKey: ObjectIdentifier(request))?.cancel() }
     }
 
-    // MARK: - 处理
+    struct Resource {
+        let body: Data
+        let contentLength: Int64
+        let contentType: String
+    }
 
-    private func serve(_ request: AVAssetResourceLoadingRequest, upstream: URL) async throws {
-        let range = request.dataRequest?.requestsAllDataToEndOfResource == true
-            ? nil
-            : (request.dataRequest.map { "bytes=\($0.requestedOffset)-\($0.requestedOffset + Int64(max($0.requestedLength, 1)) - 1)" })
+    // Shared by the delegate and tests: requests real Core resources, then adapts
+    // HTTP byte offsets to the bytes AVFoundation actually requested.
+    func load(_ upstream: URL, offset: Int64, length: Int?) async throws -> Resource {
+        try validateManifestMethod()
+        guard offset >= 0, length == nil || length! >= 0 else { throw failure("invalid media range") }
         var headers: [String: String] = [:]
-        if let range { headers["Range"] = range }
-        let result = try await client.fetchSegment(upstream.absoluteString, headers)
-
-        guard let data = Data(base64Encoded: result.body) else {
-            throw NSError(domain: "dev.openhuangguo", code: -2, userInfo: [NSLocalizedDescriptionKey: "bad segment body"])
+        if let root = playbackURL, Self.sameOrigin(root, upstream) {
+            headers = playback?.mediaHeaders ?? [:]
         }
-
-        // 子清单递归：扩展名 / MIME / #EXTM3U 内容任一命中即再次改写。
-        if Self.looksLikePlaylist(url: upstream, headers: result.headers, body: data) {
-            let text = String(decoding: data, as: UTF8.self)
-            let rewritten = try await client.rewritePlaylist(upstream.absoluteString, scheme, host, text)
-            let out = Data(rewritten.utf8)
-            serveData(request, data: out, status: result.status, headers: result.headers, isPlaylist: true)
-            return
+        // The player owns Range. Signed headers cannot override the requested bytes.
+        headers = headers.filter { $0.key.lowercased() != "range" }
+        if upstream.pathExtension.lowercased() != "m3u8" {
+            if let length, length > 0 {
+                let (end, overflow) = offset.addingReportingOverflow(Int64(length - 1))
+                guard !overflow else { throw failure("invalid media range") }
+                headers["Range"] = "bytes=\(offset)-\(end)"
+            } else if offset > 0 { headers["Range"] = "bytes=\(offset)-" }
         }
-
-        serveData(request, data: data, status: result.status, headers: result.headers, isPlaylist: false)
-    }
-
-    private func serveData(_ request: AVAssetResourceLoadingRequest, data: Data, status: Int,
-                           headers: [String: String], isPlaylist: Bool) {
-        if let info = request.contentInformationRequest {
-            if let len = headers["Content-Length"].flatMap({ Int($0) }) { info.contentLength = Int64(len) }
-            info.contentType = isPlaylist ? "application/vnd.apple.mpegurl" : (headers["Content-Type"] ?? "video/mp2t")
-            info.isByteRangeAccessSupported = true
-        }
-        if let dataRequest = request.dataRequest {
-            let offset = Int(dataRequest.currentOffset)
-            if offset < data.count {
-                dataRequest.respond(with: data.subdata(in: offset..<data.count))
-            } else {
-                dataRequest.respond(with: Data())
+        var result = try await client.fetchSegment(upstream.absoluteString, headers)
+        try Task.checkCancellation()
+        var body = try decodedBody(result)
+        if Self.looksLikePlaylist(url: upstream, headers: result.headers, body: body) {
+            // A MIME-detected playlist may have been requested with Range. Rewrite
+            // only complete manifests, never a truncated 206 response.
+            if result.status == 206 {
+                headers.removeValue(forKey: "Range")
+                result = try await client.fetchSegment(upstream.absoluteString, headers)
+                try Task.checkCancellation()
+                body = try decodedBody(result)
             }
+            guard result.status == 200 else { throw failure("incomplete media playlist") }
+            let base = result.url.isEmpty ? upstream.absoluteString : result.url
+            let rewritten = try await client.rewritePlaylist(base, scheme, host, String(decoding: body, as: UTF8.self))
+            try Task.checkCancellation()
+            body = Data(rewritten.utf8)
+            return Resource(body: slice(body, offset: offset, length: length), contentLength: Int64(body.count), contentType: "com.apple.m3u-playlist")
         }
-        let response = HTTPURLResponse(url: request.request.url!, statusCode: status,
-                                       httpVersion: "HTTP/1.1", headerFields: headers)!
-        request.response = response
-        request.finishLoading()
+        var start: Int64 = 0
+        var total = Int64(body.count)
+        if result.status == 206 {
+            guard let range = Self.header("Content-Range", in: result.headers), range.hasPrefix("bytes ") else {
+                throw failure("missing media Content-Range")
+            }
+            let parts = range.dropFirst(6).split(separator: "/")
+            let bounds = parts.first?.split(separator: "-") ?? []
+            guard parts.count == 2, bounds.count == 2,
+                  let first = Int64(bounds[0]), let last = Int64(bounds[1]), let size = Int64(parts[1]),
+                  first >= 0, last >= first, last < size, last - first == Int64(body.count) - 1,
+                  first <= offset, offset <= last + 1 else { throw failure("invalid media Content-Range") }
+            start = first
+            total = size
+        }
+        let mime = Self.header("Content-Type", in: result.headers)?.split(separator: ";").first.map(String.init)
+        let type = mime.flatMap { UTType(mimeType: $0)?.identifier } ?? UTType.data.identifier
+        return Resource(body: slice(body, offset: offset - start, length: length), contentLength: total, contentType: type)
     }
 
-    // MARK: - 工具
+    private func decodedBody(_ result: SegmentResult) throws -> Data {
+        guard result.status == 200 || result.status == 206 else { throw failure("media HTTP \(result.status)") }
+        guard let body = Data(base64Encoded: result.body) else { throw failure("invalid media body") }
+        return body
+    }
 
-    /// 从 `hg://localhost/seg?u=<pct>` 还原上游 URL（scheme+host 显式传入，避免重复拼接）。
+    private func validateManifestMethod() throws {
+        let method = (playback?.manifestMethod ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard method.isEmpty || method == "GET" else { throw failure("unsupported manifest method: \(method)") }
+    }
+
+    private func slice(_ data: Data, offset: Int64, length: Int?) -> Data {
+        guard offset >= 0, offset < data.count else { return Data() }
+        let start = Int(offset)
+        let count = min(length ?? data.count, data.count - start)
+        return data.subdata(in: start..<(start + count))
+    }
+
+    private func failure(_ message: String) -> NSError {
+        NSError(domain: "dev.openhuangguo.player", code: -1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
     static func upstreamURL(from local: URL, scheme: String, host: String) -> URL? {
-        guard local.scheme?.lowercased() == scheme.lowercased(),
-              local.host?.lowercased() == host.lowercased(),
-              let components = URLComponents(url: local, resolvingAgainstBaseURL: false),
-              let encoded = components.queryItems?.first(where: { $0.name == "u" })?.value else {
-            return nil
-        }
-        return URL(string: encoded.removingPercentEncoding ?? encoded)
+        guard local.scheme?.lowercased() == scheme.lowercased(), local.host?.lowercased() == host.lowercased(),
+              local.path == "/seg", let components = URLComponents(url: local, resolvingAgainstBaseURL: false),
+              let value = components.queryItems?.first(where: { $0.name == "u" })?.value else { return nil }
+        // URLComponents has already decoded the query value. A second decode
+        // corrupts signed URLs containing escaped path separators or query values.
+        return URL(string: value)
+    }
+
+    private static func sameOrigin(_ a: URL, _ b: URL) -> Bool {
+        func port(_ url: URL) -> Int { url.port ?? (url.scheme?.lowercased() == "https" ? 443 : 80) }
+        return a.scheme?.lowercased() == b.scheme?.lowercased() && a.host?.lowercased() == b.host?.lowercased() && port(a) == port(b)
+    }
+
+    private static func header(_ name: String, in headers: [String: String]) -> String? {
+        headers.first { $0.key.caseInsensitiveCompare(name) == .orderedSame }?.value
     }
 
     private static func looksLikePlaylist(url: URL, headers: [String: String], body: Data) -> Bool {
-        let ext = (url.pathExtension as NSString).lowercased
-        if ext == "m3u8" { return true }
-        let cth = (headers["Content-Type"] ?? "").lowercased()
-        if cth.contains("mpegurl") || cth.contains("m3u8") { return true }
-        let prefix = "#EXTM3U".utf8
-        return body.count >= prefix.count && Array(body.prefix(prefix.count)) == Array(prefix)
+        let mime = header("Content-Type", in: headers)?.lowercased() ?? ""
+        return url.pathExtension.lowercased() == "m3u8" || mime.contains("mpegurl") || mime.contains("m3u8") || body.starts(with: Data("#EXTM3U".utf8))
     }
 }

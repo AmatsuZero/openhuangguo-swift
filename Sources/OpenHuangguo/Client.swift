@@ -339,4 +339,15 @@ public struct SegmentResult: Decodable, Sendable {
     public var status: Int
     public var headers: [String: String]
     public var body: String
+    /// Final upstream URL after redirects; absent in older Core versions.
+    public var url: String = ""
+
+    enum CodingKeys: String, CodingKey { case status, headers, body, url }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        status = try values.decode(Int.self, forKey: .status)
+        headers = try values.decode([String: String].self, forKey: .headers)
+        body = try values.decode(String.self, forKey: .body)
+        url = try values.decodeIfPresent(String.self, forKey: .url) ?? ""
+    }
 }

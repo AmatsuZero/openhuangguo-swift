@@ -176,4 +176,6 @@ data class SegmentResult(
     val status: Int = 0,
     val headers: Map<String, String> = emptyMap(),
     val body: String = "",
+    /** Final URL after any guarded media redirect; older Core binaries leave this empty. */
+    val url: String = "",
 )

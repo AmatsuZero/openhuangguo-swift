@@ -221,6 +221,7 @@ type SegmentResult struct {
 	Status  int               `json:"status"`
 	Headers map[string]string `json:"headers"`
 	Body    []byte            `json:"body"`
+	URL     string            `json:"url,omitempty"`
 }
 
 // FetchSegment 用共享 transport 拉取分片/KEY，透传 Range 等请求头，返回 206 与响应头。
@@ -240,5 +241,5 @@ func (c *Client) FetchSegment(ctx context.Context, url string, reqHeader map[str
 	if err != nil {
 		return SegmentResult{}, fmt.Errorf("%w: %w", ErrTransport, err)
 	}
-	return SegmentResult{Status: resp.StatusCode, Headers: resp.Headers, Body: resp.Body}, nil
+	return SegmentResult{Status: resp.StatusCode, Headers: resp.Headers, Body: resp.Body, URL: resp.URL}, nil
 }

@@ -43,6 +43,7 @@ internal inline fun <reified T> decodeResult(value: Any?): T {
                     h.keys().asSequence().associateWith { k -> h.optString(k) }
                 } ?: emptyMap(),
                 body = o.optString("body"),
+                url = o.optString("url"),
             ) as T
         }
         AuthResult::class -> {
