@@ -3,6 +3,17 @@
 // 消费者：` .package(url: "https://github.com/AmatsuZero/openhuangguo-swift.git", from: "0.1.0") `
 // 二进制 OpenHuangguoCore.xcframework 由 hg-xcf.yml 发布到本仓库 release 并回填 URL/checksum。
 import PackageDescription
+import Foundation
+
+let publishedCore: Target = .binaryTarget(
+    name: "OpenHuangguoCore",
+    url: "https://github.com/AmatsuZero/openhuangguo-swift/releases/download/hg-xcf-v0.1.1/OpenHuangguoCore.xcframework.zip",
+    checksum: "047e069075a2296de1cc1b2aed061db7d3cbf84d3afb968c7a2599120e8296e6"
+)
+
+let core: Target = ProcessInfo.processInfo.environment["OPENHUANGGUO_CORE_PATH"].map {
+    .binaryTarget(name: "OpenHuangguoCore", path: $0)
+} ?? publishedCore
 
 let package = Package(
     name: "OpenHuangguo",
@@ -11,11 +22,7 @@ let package = Package(
         .library(name: "OpenHuangguo", targets: ["OpenHuangguo"]),
     ],
     targets: [
-        .binaryTarget(
-            name: "OpenHuangguoCore",
-            url: "https://github.com/AmatsuZero/openhuangguo-swift/releases/download/hg-xcf-v0.1.1/OpenHuangguoCore.xcframework.zip",
-            checksum: "047e069075a2296de1cc1b2aed061db7d3cbf84d3afb968c7a2599120e8296e6"
-        ),
+        core,
         .target(
             name: "OpenHuangguo",
             dependencies: ["OpenHuangguoCore"],

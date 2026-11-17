@@ -46,6 +46,18 @@ func TestMediaRedirectNoDowngrade(t *testing.T) {
 	}
 }
 
+func TestSignedMediaHeadersAreNotForwardedToAnotherOrigin(t *testing.T) {
+	from := req(t, "https://cdn.example.com/main.m3u8")
+	to := req(t, "https://other.example.com/part.ts")
+	to.Header = http.Header{"X-Cdn-Auth": []string{"private"}, "X-Cdn-App": []string{"player"}, "Range": []string{"bytes=0-9"}}
+	if err := mediaCheckRedirect(to, []*http.Request{from}); err != nil {
+		t.Fatal(err)
+	}
+	if to.Header.Get("X-Cdn-Auth") != "" || to.Header.Get("X-Cdn-App") != "" || to.Header.Get("Range") != "bytes=0-9" {
+		t.Fatalf("unsafe redirect headers: %v", to.Header)
+	}
+}
+
 // 最多跟随 5 跳：via 长度 5（即将跟第 5 跳）应放行，长度 6（第 6 跳）才拒绝。
 func TestMediaRedirectMaxHops(t *testing.T) {
 	via5 := make([]*http.Request, 5)

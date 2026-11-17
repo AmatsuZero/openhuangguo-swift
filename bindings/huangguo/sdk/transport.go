@@ -110,6 +110,14 @@ func mediaCheckRedirect(req *http.Request, via []*http.Request) error {
 		if strings.EqualFold(prev.URL.Scheme, "https") && !strings.EqualFold(req.URL.Scheme, "https") {
 			return errors.New("media redirect downgrade from https to http refused")
 		}
+		if !strings.EqualFold(prev.URL.Scheme, req.URL.Scheme) || !strings.EqualFold(prev.URL.Host, req.URL.Host) {
+			for key := range req.Header {
+				lower := strings.ToLower(key)
+				if strings.HasPrefix(lower, "x-cdn-") || lower == "authorization" || lower == "cookie" {
+					req.Header.Del(key)
+				}
+			}
+		}
 	}
 	return nil
 }

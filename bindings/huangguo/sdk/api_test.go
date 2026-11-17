@@ -159,6 +159,22 @@ func TestPlayFallbackAndStreams(t *testing.T) {
 	}
 }
 
+func TestPlayAcceptsCurrentStringIdentityAndRetainsCDNHeaders(t *testing.T) {
+	tr := &scriptedTransport{resps: []*Response{edgeOK(`{"id":"9007199254740993","ep":2,"streams":{"main":"https://cdn.example/master.m3u8"},"manifest_method":"GET","cdn":{"m3u8Enabled":true,"authKey":"x-cdn-auth","authValue":"signed","app":"player"}}`)}}
+	c, _ := NewClient(Options{Transport: tr, Store: NewMemStore()})
+	p, err := c.Play(context.Background(), 9007199254740993, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(p)
+	var data map[string]any
+	json.Unmarshal(encoded, &data)
+	headers, _ := data["media_headers"].(map[string]any)
+	if p.ID != 9007199254740993 || p.EpNum != 2 || p.VideoURL != "https://cdn.example/master.m3u8" || len(tr.requests) != 1 || headers["x-cdn-auth"] != "signed" || headers["x-cdn-app"] != "player" || data["manifest_method"] != "GET" {
+		t.Fatalf("lost current playback contract: %s requests=%d", encoded, len(tr.requests))
+	}
+}
+
 func TestLoginStoresSession(t *testing.T) {
 	tr := &scriptedTransport{resps: []*Response{edgeOK(`{"token":"newtok","user":{"id":1,"username":"u"}}`)}}
 	store := NewMemStore()

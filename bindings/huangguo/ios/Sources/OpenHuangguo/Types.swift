@@ -409,8 +409,10 @@ public struct PlayInfo: Codable, Hashable, Sendable {
     public var videoUrl: String
     public var videoUrlHevc: String
     public var streams: Streams?
+    public var mediaHeaders: [String: String]
+    public var manifestMethod: String
 
-    public init(id: Int = 0, epNum: Int = 0, duration: Int = 0, title: String = "", videoUrl: String = "", videoUrlHevc: String = "", streams: Streams? = nil) {
+    public init(id: Int = 0, epNum: Int = 0, duration: Int = 0, title: String = "", videoUrl: String = "", videoUrlHevc: String = "", streams: Streams? = nil, mediaHeaders: [String: String] = [:], manifestMethod: String = "") {
         self.id = id
         self.epNum = epNum
         self.duration = duration
@@ -418,6 +420,8 @@ public struct PlayInfo: Codable, Hashable, Sendable {
         self.videoUrl = videoUrl
         self.videoUrlHevc = videoUrlHevc
         self.streams = streams
+        self.mediaHeaders = mediaHeaders
+        self.manifestMethod = manifestMethod
     }
 
     enum CodingKeys: String, CodingKey {
@@ -428,6 +432,8 @@ public struct PlayInfo: Codable, Hashable, Sendable {
         case videoUrl = "video_url"
         case videoUrlHevc = "video_url_hevc"
         case streams
+        case mediaHeaders = "media_headers"
+        case manifestMethod = "manifest_method"
     }
 
     public init(from decoder: Decoder) throws {
@@ -439,6 +445,8 @@ public struct PlayInfo: Codable, Hashable, Sendable {
         self.videoUrl = try c.decodeIfPresent(String.self, forKey: .videoUrl) ?? ""
         self.videoUrlHevc = try c.decodeIfPresent(String.self, forKey: .videoUrlHevc) ?? ""
         self.streams = try c.decodeIfPresent(Streams.self, forKey: .streams)
+        self.mediaHeaders = try c.decodeIfPresent([String: String].self, forKey: .mediaHeaders) ?? [:]
+        self.manifestMethod = try c.decodeIfPresent(String.self, forKey: .manifestMethod) ?? ""
     }
 }
 

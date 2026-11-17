@@ -128,13 +128,15 @@ type Streams struct {
 }
 
 type PlayInfo struct {
-	ID           int64    `json:"id"`
-	EpNum        int      `json:"ep_num"`
-	Duration     int      `json:"duration"`
-	Title        string   `json:"title"`
-	VideoURL     string   `json:"video_url"`
-	VideoURLHevc string   `json:"video_url_hevc,omitempty"`
-	Streams      *Streams `json:"streams,omitempty"`
+	ID             int64             `json:"id"`
+	EpNum          int               `json:"ep_num"`
+	Duration       int               `json:"duration"`
+	Title          string            `json:"title"`
+	VideoURL       string            `json:"video_url"`
+	VideoURLHevc   string            `json:"video_url_hevc,omitempty"`
+	Streams        *Streams          `json:"streams,omitempty"`
+	MediaHeaders   map[string]string `json:"media_headers,omitempty"`
+	ManifestMethod string            `json:"manifest_method,omitempty"`
 }
 
 type RankMetrics struct {

@@ -345,6 +345,8 @@ data class PlayInfo(
     val videoUrl: String = "",
     val videoUrlHevc: String = "",
     val streams: Streams? = null,
+    val mediaHeaders: Map<String, String> = emptyMap(),
+    val manifestMethod: String = "",
 ) {
     /** 编码成与 Go SDK 相同的 JSON。 */
     fun toJson(): JSONObject = JSONObject().apply {
@@ -355,6 +357,8 @@ data class PlayInfo(
         put("video_url", videoUrl)
         put("video_url_hevc", videoUrlHevc)
         put("streams", streams?.toJson())
+        put("media_headers", JSONObject(mediaHeaders))
+        put("manifest_method", manifestMethod)
     }
 
     companion object {
@@ -367,6 +371,8 @@ data class PlayInfo(
             videoUrl = o.opt("video_url").asString(),
             videoUrlHevc = o.opt("video_url_hevc").asString(),
             streams = (o.opt("streams") as? JSONObject)?.let(Streams::fromJson),
+            mediaHeaders = o.opt("media_headers").asMap { it.asString() },
+            manifestMethod = o.opt("manifest_method").asString(),
         )
     }
 }
