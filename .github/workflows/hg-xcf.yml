@@ -80,7 +80,13 @@ jobs:
         id: pkg
         run: |
           cd bindings/huangguo/build
-          zip -r OpenHuangguoCore.xcframework.zip OpenHuangguoCore.xcframework
+          # Preserve macOS versioned-framework symlinks. Dereferencing them
+          # produces an archive that builds but fails SwiftPM test signing.
+          zip -yr OpenHuangguoCore.xcframework.zip OpenHuangguoCore.xcframework
+          VERIFY_DIR="$RUNNER_TEMP/hg-archive-verify"
+          unzip -q OpenHuangguoCore.xcframework.zip -d "$VERIFY_DIR"
+          test -L "$VERIFY_DIR/OpenHuangguoCore.xcframework/macos-arm64_x86_64/OpenHuangguoCore.framework/Versions/Current"
+          test -f "$VERIFY_DIR/OpenHuangguoCore.xcframework/macos-arm64_x86_64/OpenHuangguoCore.framework/OpenHuangguoCore"
           CK=$(shasum -a 256 OpenHuangguoCore.xcframework.zip | awk '{print $1}')
           echo "checksum=$CK" >> "$GITHUB_OUTPUT"
 
