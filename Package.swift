@@ -7,8 +7,8 @@ import Foundation
 
 let publishedCore: Target = .binaryTarget(
     name: "OpenHuangguoCore",
-    url: "https://github.com/AmatsuZero/openhuangguo-swift/releases/download/hg-xcf-v0.1.3/OpenHuangguoCore.xcframework.zip",
-    checksum: "4fc5a2259be547977d873cc1fc377f12f63cb3ab45d2424abc227b1ae452d166"
+    url: "https://github.com/AmatsuZero/openhuangguo-swift/releases/download/hg-xcf-v0.1.4/OpenHuangguoCore.xcframework.zip",
+    checksum: "c8a3016d18fe9287cad61a0e2acd5312717c70eedcda2c51fe1674b9075e6898"
 )
 
 let core: Target = ProcessInfo.processInfo.environment["OPENHUANGGUO_CORE_PATH"].map {
