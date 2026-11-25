@@ -3,7 +3,6 @@ package dispatch
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,16 +15,10 @@ type stubTransport struct{}
 
 func (stubTransport) Do(ctx context.Context, r *sdk.Request) (*sdk.Response, error) {
 	body := `{"status":1,"data":{"items":[],"pagination":{"page":1,"pages":0,"size":20,"total":0}}}`
-	if strings.Contains(r.URL, "/edge/request") {
-		var env struct {
-			Path string `json:"path"`
-		}
-		_ = json.Unmarshal(r.Body, &env)
-		if strings.Contains(env.Path, "/playback") || strings.Contains(env.Path, "/play") {
-			body = `{"status":1,"data":{"id":1,"ep_num":2,"duration":0,"title":"t","video_url":"https://cdn/v.mp4"}}`
-		} else if strings.Contains(env.Path, "loginByPassword") || strings.Contains(env.Path, "registerByPassword") {
-			body = `{"status":1,"data":{"token":"tok","user":{"id":1,"username":"u"}}}`
-		}
+	if strings.Contains(r.URL, "/playback") || strings.Contains(r.URL, "/play") {
+		body = `{"status":1,"data":{"id":1,"ep_num":2,"duration":0,"title":"t","video_url":"https://cdn/v.mp4"}}`
+	} else if strings.Contains(r.URL, "loginByPassword") || strings.Contains(r.URL, "registerByPassword") {
+		body = `{"status":1,"data":{"token":"tok","user":{"id":1,"username":"u"}}}`
 	}
 	return &sdk.Response{StatusCode: 200, Body: []byte(body)}, nil
 }

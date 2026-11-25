@@ -2,7 +2,6 @@ package sdk
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,15 +32,7 @@ func (e *CodeError) Error() string { return e.Message }
 // Is 让 errors.Is(err, ErrCode) 成立。
 func (e *CodeError) Is(target error) bool { return target == ErrCode }
 
-// edgeEnvelope 是 HGhub 所有业务接口收敛到的请求信封。
-type edgeEnvelope struct {
-	Method      string `json:"method"`
-	Path        string `json:"path"`
-	Body        string `json:"body"`
-	ContentType string `json:"content_type"`
-}
-
-// edge 是唯一线上出口。全程使用同一份 (token, base) 快照。
+// edge 是唯一线上出口，按 api.go 给出的明文路径直连。全程使用同一份 (token, base) 快照。
 func (c *Client) edge(ctx context.Context, method, path string, body any, needCred bool) ([]byte, error) {
 	s, base := c.snapshot()
 
@@ -57,35 +48,31 @@ func (c *Client) edge(ctx context.Context, method, path string, body any, needCr
 		return nil, fmt.Errorf("%w: token origin %q does not match base %q", ErrAuth, s.Origin, base)
 	}
 
-	enc, ctype := "", ""
+	var raw []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
-		enc = base64.StdEncoding.EncodeToString(b)
-		ctype = "application/json"
-	}
-	payload, err := json.Marshal(edgeEnvelope{Method: method, Path: path, Body: enc, ContentType: ctype})
-	if err != nil {
-		return nil, err
+		raw = b
 	}
 
 	headers := map[string]string{
-		"Accept":       "application/json",
-		"Content-Type": "application/json", // 外层信封的媒体类型
-		"Referer":      base + "/",
+		"Accept":  "application/json",
+		"Referer": base + "/",
+	}
+	if raw != nil {
+		headers["Content-Type"] = "application/json"
 	}
 	if s.Token != "" {
 		headers["Authorization"] = "Bearer " + s.Token
 	}
 
 	resp, err := c.transport.Do(ctx, &Request{
-		Method:     "POST",
-		URL:        base + "/api/edge/request",
-		Headers:    headers,
-		Body:       payload,
-		NoRedirect: true, // edge 首版禁自动重定向
+		Method:  method,
+		URL:     base + path,
+		Headers: headers,
+		Body:    raw,
 	})
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -99,7 +86,7 @@ func (c *Client) edge(ctx context.Context, method, path string, body any, needCr
 		return nil, fmt.Errorf("%w: %w", ErrTransport, err)
 	}
 
-	// 先判 HTTP 状态，再解析信封。
+	// 先判 HTTP 状态，再解析响应。
 	if err := classifyHTTPStatus(resp.StatusCode); err != nil {
 		return nil, err
 	}

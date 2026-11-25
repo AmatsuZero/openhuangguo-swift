@@ -97,13 +97,8 @@ func TestAllEndpointsPaths(t *testing.T) {
 			if len(tr.requests) == 0 {
 				t.Fatal("no request recorded")
 			}
-			// 请求经 edge 封装：外层 method 恒 POST，URL 恒 /api/edge/request；
-			// 业务 method/path 在解码后的信封里。
-			var env edgeEnvelope
-			if err := json.Unmarshal(tr.requests[0].Body, &env); err != nil {
-				t.Fatal(err)
-			}
-			got := env.Method + " " + env.Path
+			// 明文直连：method 与 path 直接落在请求上。
+			got := tr.requests[0].Method + " " + strings.TrimPrefix(tr.requests[0].URL, "https://huangguoai.com")
 			if got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
@@ -138,10 +133,8 @@ func TestPlayFallbackAndStreams(t *testing.T) {
 	if p2.VideoURL != "https://cdn/legacy.mp4" || len(tr2.requests) != 2 {
 		t.Fatalf("legacy fallback failed: %+v, requests=%d", p2, len(tr2.requests))
 	}
-	var env2 edgeEnvelope
-	_ = json.Unmarshal(tr2.requests[1].Body, &env2)
-	if !strings.Contains(env2.Path, "/api/videos/1/play?ep=2&page_texts=0") {
-		t.Fatalf("legacy path = %s", env2.Path)
+	if !strings.Contains(tr2.requests[1].URL, "/api/videos/1/play?ep=2&page_texts=0") {
+		t.Fatalf("legacy URL = %s", tr2.requests[1].URL)
 	}
 
 	// 3. 新接口失败（不可重试）→ 用旧接口结果。

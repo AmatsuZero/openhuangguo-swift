@@ -2,8 +2,6 @@ package sdk
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -11,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestEdgeHTTPStatusBeforeEnvelope(t *testing.T) {
+func TestEdgeHTTPStatusBeforeResponseParse(t *testing.T) {
 	cases := []struct {
 		name    string
 		status  int
@@ -51,6 +49,8 @@ func TestEdgeHTTPStatusBeforeEnvelope(t *testing.T) {
 }
 
 type captureRoundTripper struct {
+	method  string
+	url     string
 	auth    string
 	ct      string
 	referer string
@@ -59,10 +59,13 @@ type captureRoundTripper struct {
 }
 
 func (rt *captureRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt.method = req.Method
+	rt.url = req.URL.String()
 	rt.auth = req.Header.Get("Authorization")
 	rt.ct = req.Header.Get("Content-Type")
 	rt.referer = req.Header.Get("Referer")
 	rt.accept = req.Header.Get("Accept")
+	rt.body = nil
 	if req.Body != nil {
 		rt.body, _ = io.ReadAll(req.Body)
 	}
@@ -73,7 +76,7 @@ func (rt *captureRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 	}, nil
 }
 
-func TestEdgeEnvelopeFields(t *testing.T) {
+func TestEdgeDirectRequestFields(t *testing.T) {
 	rt := &captureRoundTripper{}
 	tr := NewHTTPTransport(TransportConfig{})
 	tr.client.Transport = rt
@@ -81,44 +84,39 @@ func TestEdgeEnvelopeFields(t *testing.T) {
 	_ = store.Save(Session{Origin: "https://huangguoai.com", Token: "tok", Generation: 1})
 	c, _ := NewClient(Options{Transport: tr, Store: store, Base: "https://huangguoai.com"})
 
-	// 无 body：两空串。
+	// 无 body：明文 GET，直连 path，无 Content-Type。
 	if _, err := c.edge(context.Background(), "GET", "/api/videos", nil, false); err != nil {
 		t.Fatal(err)
 	}
-	var env edgeEnvelope
-	if err := json.Unmarshal(rt.body, &env); err != nil {
-		t.Fatal(err)
+	if rt.method != "GET" || rt.url != "https://huangguoai.com/api/videos" {
+		t.Fatalf("request = %s %s", rt.method, rt.url)
 	}
-	if env.Method != "GET" || env.Path != "/api/videos" || env.Body != "" || env.ContentType != "" {
-		t.Fatalf("bad no-body envelope: %+v", env)
+	if len(rt.body) != 0 || rt.ct != "" {
+		t.Fatalf("GET body = %q, Content-Type = %q", rt.body, rt.ct)
 	}
 	if rt.auth != "Bearer tok" {
 		t.Fatalf("Authorization = %q", rt.auth)
 	}
-	if rt.ct != "application/json" {
-		t.Fatalf("outer Content-Type = %q", rt.ct)
+	if rt.accept != "application/json" {
+		t.Fatalf("Accept = %q", rt.accept)
 	}
 	if rt.referer != "https://huangguoai.com/" {
 		t.Fatalf("Referer = %q", rt.referer)
 	}
 
-	// 有 body：base64 + application/json。
+	// 有 body：原始 JSON，非 base64。
 	payload := map[string]any{"username": "u", "password": "p"}
 	if _, err := c.edge(context.Background(), "POST", "/api/account/loginByPassword", payload, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(rt.body, &env); err != nil {
-		t.Fatal(err)
+	if rt.method != "POST" || rt.url != "https://huangguoai.com/api/account/loginByPassword" {
+		t.Fatalf("request = %s %s", rt.method, rt.url)
 	}
-	if env.Method != "POST" || env.Path != "/api/account/loginByPassword" || env.ContentType != "application/json" {
-		t.Fatalf("bad body envelope: %+v", env)
+	if rt.ct != "application/json" {
+		t.Fatalf("Content-Type = %q", rt.ct)
 	}
-	decoded, err := base64.StdEncoding.DecodeString(env.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(decoded), `"password":"p"`) {
-		t.Fatalf("decoded body = %s", decoded)
+	if !strings.Contains(string(rt.body), `"password":"p"`) {
+		t.Fatalf("body = %s", rt.body)
 	}
 }
 
